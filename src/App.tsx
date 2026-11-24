@@ -448,6 +448,7 @@ function WaliConnectApp() {
               users={users}
               students={students}
               currentUser={currentUser}
+              searchQuery={searchQuery}
             />
           )}
 
