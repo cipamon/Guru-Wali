@@ -1,0 +1,212 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isStr(val, minLen, maxLen) {
+      return val is string && val.size() >= minLen && val.size() <= maxLen;
+    }
+
+    function isOptStr(data, key, maxLen) {
+      return !(key in data) || (data[key] is string && data[key].size() <= maxLen);
+    }
+
+    function isValidAppId(appId) {
+      return appId == 'waliconnect-pro';
+    }
+
+    function isValidWcUser(data) {
+      return data.keys().hasAll(['nama', 'nip', 'role', 'password'])
+        && data.keys().hasOnly(['id', 'nama', 'nip', 'role', 'password', 'linked_student_id', 'jabatan', 'created_at'])
+        && isOptStr(data, 'id', 128)
+        && isStr(data.nama, 1, 160)
+        && isStr(data.nip, 1, 64)
+        && data.role in ['Guru Wali', 'Orang Tua', 'Siswa', 'Admin']
+        && isStr(data.password, 1, 128)
+        && isOptStr(data, 'linked_student_id', 128)
+        && isOptStr(data, 'jabatan', 160)
+        && isOptStr(data, 'created_at', 64);
+    }
+
+    function isValidWcStudent(data) {
+      return data.keys().hasAll(['nama_lengkap', 'kelas', 'nis'])
+        && data.keys().hasOnly([
+          'id', 'nama_lengkap', 'nama_panggilan', 'jenis_kelamin', 'kelas', 'nis', 'nisn',
+          'ttl', 'whatsapp', 'email', 'alamat', 'agama', 'hobi',
+          'nama_ayah', 'pekerjaan_ayah', 'nama_ibu', 'pekerjaan_ibu', 'alamat_ortu', 'kontak_ortu',
+          'deskripsi_diri', 'rencana_lulus', 'prodi_pilihan', 'langkah_pencapaian', 'catatan_khusus',
+          'foto_url', 'kehadiran', 'perkembangan', 'bk_detail', 'updated_at'
+        ])
+        && isOptStr(data, 'id', 128)
+        && isStr(data.nama_lengkap, 1, 160)
+        && isOptStr(data, 'nama_panggilan', 80)
+        && (!('jenis_kelamin' in data) || data.jenis_kelamin in ['L', 'P'])
+        && isStr(data.kelas, 1, 64)
+        && isStr(data.nis, 1, 64)
+        && isOptStr(data, 'nisn', 64)
+        && isOptStr(data, 'ttl', 160)
+        && isOptStr(data, 'whatsapp', 40)
+        && isOptStr(data, 'email', 120)
+        && isOptStr(data, 'alamat', 400)
+        && isOptStr(data, 'agama', 40)
+        && isOptStr(data, 'hobi', 200)
+        && isOptStr(data, 'nama_ayah', 160)
+        && isOptStr(data, 'pekerjaan_ayah', 160)
+        && isOptStr(data, 'nama_ibu', 160)
+        && isOptStr(data, 'pekerjaan_ibu', 160)
+        && isOptStr(data, 'alamat_ortu', 400)
+        && isOptStr(data, 'kontak_ortu', 64)
+        && isOptStr(data, 'deskripsi_diri', 2000)
+        && (!('rencana_lulus' in data) || data.rencana_lulus in ['Kuliah', 'Bekerja', 'Gap-year', ''])
+        && isOptStr(data, 'prodi_pilihan', 200)
+        && isOptStr(data, 'langkah_pencapaian', 3000)
+        && isOptStr(data, 'catatan_khusus', 2000)
+        && isOptStr(data, 'foto_url', 600000)
+        && (!('kehadiran' in data) || (data.kehadiran is list && data.kehadiran.size() <= 20))
+        && (!('perkembangan' in data) || data.perkembangan is map)
+        && (!('bk_detail' in data) || data.bk_detail is map)
+        && isOptStr(data, 'updated_at', 64);
+    }
+
+    function isValidWcLog(data) {
+      return data.keys().hasAll(['student_id', 'tanggal', 'kategori', 'topik', 'status_kanban'])
+        && data.keys().hasOnly([
+          'id', 'student_id', 'student_name', 'tanggal', 'sesi_ke', 'kategori',
+          'topik', 'uraian', 'tindak_lanjut', 'status_kanban',
+          'author_name', 'author_role', 'foto_url', 'created_at'
+        ])
+        && isOptStr(data, 'id', 128)
+        && isStr(data.student_id, 1, 128)
+        && isOptStr(data, 'student_name', 160)
+        && isStr(data.tanggal, 1, 32)
+        && (!('sesi_ke' in data) || data.sesi_ke is number)
+        && data.kategori in ['Akademik', 'Karakter', 'Sosial-Emosional', 'Kedisiplinan', 'Karir']
+        && isStr(data.topik, 1, 300)
+        && isOptStr(data, 'uraian', 4000)
+        && isOptStr(data, 'tindak_lanjut', 3000)
+        && data.status_kanban in ['Dalam Proses', 'Perlu Tindak Lanjut', 'Selesai Tertangani']
+        && isOptStr(data, 'author_name', 160)
+        && isOptStr(data, 'author_role', 64)
+        && isOptStr(data, 'foto_url', 600000)
+        && isOptStr(data, 'created_at', 64);
+    }
+
+    function isValidWcMessage(data) {
+      return data.keys().hasAll(['channel_type', 'target_id', 'sender_id', 'sender_name', 'created_at'])
+        && data.keys().hasOnly([
+          'id', 'channel_type', 'target_id', 'sender_id', 'sender_name',
+          'sender_role', 'text', 'foto_url', 'created_at'
+        ])
+        && isOptStr(data, 'id', 128)
+        && data.channel_type in ['account', 'student']
+        && isStr(data.target_id, 1, 128)
+        && isStr(data.sender_id, 1, 128)
+        && isStr(data.sender_name, 1, 160)
+        && isOptStr(data, 'sender_role', 64)
+        && isOptStr(data, 'text', 3000)
+        && isOptStr(data, 'foto_url', 600000)
+        && isStr(data.created_at, 1, 64);
+    }
+
+    function isValidWcAnnouncement(data) {
+      return data.keys().hasAll(['judul', 'isi', 'tanggal'])
+        && data.keys().hasOnly([
+          'id', 'judul', 'isi', 'tanggal', 'waktu', 'lokasi',
+          'kategori', 'author_name', 'foto_url', 'created_at'
+        ])
+        && isOptStr(data, 'id', 128)
+        && isStr(data.judul, 1, 240)
+        && isStr(data.isi, 1, 4000)
+        && isStr(data.tanggal, 1, 32)
+        && isOptStr(data, 'waktu', 64)
+        && isOptStr(data, 'lokasi', 200)
+        && isOptStr(data, 'kategori', 80)
+        && isOptStr(data, 'author_name', 160)
+        && isOptStr(data, 'foto_url', 600000)
+        && isOptStr(data, 'created_at', 64);
+    }
+
+    function isValidWcPrintConfig(data) {
+      return data.keys().hasOnly([
+          'tahun_ajaran', 'tempat_tanggal', 'logo_kiri', 'logo_kanan', 'kop_lines',
+          'ttd_layout', 'ttd_offset_x', 'ttd_left_offset_x', 'ttd_right_offset_x', 'ttd_spacer', 'ttd_align',
+          'ttd_left_rows', 'ttd_right_rows', 'nama_sekolah',
+          'nama_guru_wali', 'nip_guru_wali', 'nama_kepsek', 'nip_kepsek',
+          'orientations', 'doc_font', 'ttd_landscape'
+        ])
+        && isOptStr(data, 'tahun_ajaran', 64)
+        && isOptStr(data, 'tempat_tanggal', 160)
+        && isOptStr(data, 'logo_kiri', 600000)
+        && isOptStr(data, 'logo_kanan', 600000)
+        && (!('kop_lines' in data) || (data.kop_lines is list && data.kop_lines.size() <= 10))
+        && (!('ttd_layout' in data) || data.ttd_layout in ['kepsek_guru', 'guru_kepsek', 'stacked'])
+        && (!('ttd_offset_x' in data) || data.ttd_offset_x is number)
+        && (!('ttd_left_offset_x' in data) || data.ttd_left_offset_x is number)
+        && (!('ttd_right_offset_x' in data) || data.ttd_right_offset_x is number)
+        && (!('ttd_spacer' in data) || data.ttd_spacer is number)
+        && (!('ttd_align' in data) || data.ttd_align in ['left', 'center', 'right', 'justify'])
+        && (!('ttd_left_rows' in data) || (data.ttd_left_rows is list && data.ttd_left_rows.size() <= 15))
+        && (!('ttd_right_rows' in data) || (data.ttd_right_rows is list && data.ttd_right_rows.size() <= 15))
+        && isOptStr(data, 'nama_sekolah', 200)
+        && isOptStr(data, 'nama_guru_wali', 160)
+        && isOptStr(data, 'nip_guru_wali', 64)
+        && isOptStr(data, 'nama_kepsek', 160)
+        && isOptStr(data, 'nip_kepsek', 64)
+        && (!('orientations' in data) || data.orientations is map)
+        && isOptStr(data, 'doc_font', 40)
+        && (!('ttd_landscape' in data) || data.ttd_landscape is map);
+    }
+
+    match /artifacts/{appId}/public/data/wc_users/{userId} {
+      allow list: if isValidAppId(appId);
+      allow get: if isValidAppId(appId) && isValidId(userId);
+      allow create, update: if isValidAppId(appId) && isValidId(userId) && isValidWcUser(request.resource.data);
+      allow delete: if isValidAppId(appId) && isValidId(userId);
+    }
+
+    match /artifacts/{appId}/public/data/wc_students/{studentId} {
+      allow list: if isValidAppId(appId);
+      allow get: if isValidAppId(appId) && isValidId(studentId);
+      allow create, update: if isValidAppId(appId) && isValidId(studentId) && isValidWcStudent(request.resource.data);
+      allow delete: if isValidAppId(appId) && isValidId(studentId);
+    }
+
+    match /artifacts/{appId}/public/data/wc_logs/{logId} {
+      allow list: if isValidAppId(appId);
+      allow get: if isValidAppId(appId) && isValidId(logId);
+      allow create, update: if isValidAppId(appId) && isValidId(logId) && isValidWcLog(request.resource.data);
+      allow delete: if isValidAppId(appId) && isValidId(logId);
+    }
+
+    match /artifacts/{appId}/public/data/wc_messages/{messageId} {
+      allow list: if isValidAppId(appId);
+      allow get: if isValidAppId(appId) && isValidId(messageId);
+      allow create, update: if isValidAppId(appId) && isValidId(messageId) && isValidWcMessage(request.resource.data);
+      allow delete: if isValidAppId(appId) && isValidId(messageId);
+    }
+
+    match /artifacts/{appId}/public/data/wc_announcements/{announcementId} {
+      allow list: if isValidAppId(appId);
+      allow get: if isValidAppId(appId) && isValidId(announcementId);
+      allow create, update: if isValidAppId(appId) && isValidId(announcementId) && isValidWcAnnouncement(request.resource.data);
+      allow delete: if isValidAppId(appId) && isValidId(announcementId);
+    }
+
+    match /artifacts/{appId}/public/data/wc_settings/{settingId} {
+      allow list: if isValidAppId(appId);
+      allow get: if isValidAppId(appId) && isValidId(settingId);
+      allow create, update: if isValidAppId(appId) && isValidId(settingId) && isValidWcPrintConfig(request.resource.data);
+      allow delete: if isValidAppId(appId) && isValidId(settingId);
+    }
+
+    match /test/connection {
+      allow get: if true;
+    }
+  }
+}

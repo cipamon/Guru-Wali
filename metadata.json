@@ -1,0 +1,6 @@
+{
+  "name": "WaliConnect Pro",
+  "description": "Sistem Guru Wali & Perwalian Sekolah Terpadu sesuai Permendikdasmen No. 11 Tahun 2025 dengan Real-Time Firestore, Asisten AI Gemini, dan Cetak Laporan SOP F4.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

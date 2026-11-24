@@ -1,0 +1,136 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@layer base {
+  body {
+    font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+  }
+
+  .font-mono-tabular {
+    font-family: 'JetBrains Mono', monospace;
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Soft Neumorphic Glass UI Utilities for Login */
+.login-bg-light {
+  background: linear-gradient(135deg, #eef4ff 0%, #dbe6fa 55%, #e6eefc 100%);
+}
+
+.login-bg-dark {
+  background: linear-gradient(135deg, #0b1120 0%, #111c36 55%, #0f172a 100%);
+}
+
+.neumorphic-glass-light {
+  background: rgba(255, 255, 255, 0.78);
+  backdrop-filter: blur(22px);
+  -webkit-backdrop-filter: blur(22px);
+  box-shadow:
+    16px 16px 36px rgba(163, 184, 218, 0.42),
+    -14px -14px 32px rgba(255, 255, 255, 0.9),
+    inset 0 1px 0 rgba(255, 255, 255, 0.9);
+  border: 1px solid rgba(255, 255, 255, 0.75);
+}
+
+.neumorphic-glass-dark {
+  background: rgba(15, 23, 42, 0.8);
+  backdrop-filter: blur(22px);
+  -webkit-backdrop-filter: blur(22px);
+  box-shadow:
+    16px 16px 38px rgba(2, 6, 23, 0.7),
+    -8px -8px 24px rgba(51, 65, 85, 0.16),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(148, 163, 184, 0.16);
+}
+
+/* F4 Paper Print Styles (215mm x 330mm Portrait & 330mm x 215mm Landscape) */
+.f4-page {
+  width: 215mm;
+  min-height: 330mm;
+  padding: 14mm 16mm;
+  background: #ffffff;
+  color: #0f172a;
+  box-sizing: border-box;
+  font-family: 'Noto Serif', 'Times New Roman', Times, serif;
+}
+
+.f4-page-landscape {
+  width: 330mm;
+  min-height: 215mm;
+  padding: 12mm 16mm;
+}
+
+.f4-page-sans {
+  font-family: 'Plus Jakarta Sans', Arial, sans-serif;
+}
+
+@media print {
+  @page {
+    size: 215mm 330mm;
+    margin: 0;
+  }
+
+  @page f4-portrait {
+    size: 215mm 330mm;
+    margin: 0;
+  }
+
+  @page f4-landscape {
+    size: 330mm 215mm;
+    margin: 0;
+  }
+
+  html, body {
+    background: #ffffff !important;
+    color: #000000 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  .no-print {
+    display: none !important;
+  }
+
+  .print-only-root {
+    display: block !important;
+    width: 100% !important;
+    max-height: none !important;
+    overflow: visible !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    box-shadow: none !important;
+    border: none !important;
+    background: transparent !important;
+  }
+
+  .print-zoom-wrapper {
+    zoom: 1 !important;
+  }
+
+  .f4-page {
+    page: f4-portrait;
+    width: 215mm !important;
+    min-height: 329mm !important;
+    margin: 0 auto !important;
+    box-shadow: none !important;
+    border: none !important;
+    page-break-after: always;
+    break-after: page;
+  }
+
+  .f4-page.f4-page-landscape {
+    page: f4-landscape;
+    width: 330mm !important;
+    min-height: 214mm !important;
+  }
+
+  .f4-page:last-child {
+    page-break-after: auto;
+    break-after: auto;
+  }
+}

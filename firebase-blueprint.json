@@ -1,0 +1,168 @@
+{
+  "entities": {
+    "WcUser": {
+      "title": "WcUser",
+      "description": "Akun pengguna sistem WaliConnect Pro (Guru Wali, Orang Tua, Siswa, Admin BK)",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "nama": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "nip": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "role": { "type": "string", "enum": ["Guru Wali", "Orang Tua", "Siswa", "Admin"] },
+        "password": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "linked_student_id": { "type": "string", "maxLength": 128 },
+        "jabatan": { "type": "string", "maxLength": 160 },
+        "created_at": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["nama", "nip", "role", "password"]
+    },
+    "WcStudent": {
+      "title": "WcStudent",
+      "description": "Profil lengkap murid dampingan (Lampiran A, Formulir BK Bagian A-F, Presensi 9 sesi, Evaluasi 5 Aspek)",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "nama_lengkap": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "nama_panggilan": { "type": "string", "maxLength": 80 },
+        "jenis_kelamin": { "type": "string", "enum": ["L", "P"] },
+        "kelas": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "nis": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "nisn": { "type": "string", "maxLength": 64 },
+        "ttl": { "type": "string", "maxLength": 160 },
+        "whatsapp": { "type": "string", "maxLength": 40 },
+        "email": { "type": "string", "maxLength": 120 },
+        "alamat": { "type": "string", "maxLength": 400 },
+        "agama": { "type": "string", "maxLength": 40 },
+        "hobi": { "type": "string", "maxLength": 200 },
+        "nama_ayah": { "type": "string", "maxLength": 160 },
+        "pekerjaan_ayah": { "type": "string", "maxLength": 160 },
+        "nama_ibu": { "type": "string", "maxLength": 160 },
+        "pekerjaan_ibu": { "type": "string", "maxLength": 160 },
+        "alamat_ortu": { "type": "string", "maxLength": 400 },
+        "kontak_ortu": { "type": "string", "maxLength": 64 },
+        "deskripsi_diri": { "type": "string", "maxLength": 2000 },
+        "rencana_lulus": { "type": "string", "enum": ["Kuliah", "Bekerja", "Gap-year"] },
+        "prodi_pilihan": { "type": "string", "maxLength": 200 },
+        "langkah_pencapaian": { "type": "string", "maxLength": 3000 },
+        "catatan_khusus": { "type": "string", "maxLength": 2000 },
+        "foto_url": { "type": "string", "maxLength": 600000 },
+        "kehadiran": { "type": "array" },
+        "perkembangan": { "type": "object" },
+        "bk_detail": { "type": "object" },
+        "updated_at": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["nama_lengkap", "kelas", "nis"]
+    },
+    "WcLog": {
+      "title": "WcLog",
+      "description": "Catatan jurnal pertemuan perwalian (Lampiran C) beserta status tindak lanjut dan dokumentasi foto",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "student_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "student_name": { "type": "string", "maxLength": 160 },
+        "tanggal": { "type": "string", "minLength": 1, "maxLength": 32 },
+        "sesi_ke": { "type": "number" },
+        "kategori": { "type": "string", "enum": ["Akademik", "Karakter", "Sosial-Emosional", "Kedisiplinan", "Karir"] },
+        "topik": { "type": "string", "minLength": 1, "maxLength": 300 },
+        "uraian": { "type": "string", "maxLength": 4000 },
+        "tindak_lanjut": { "type": "string", "maxLength": 3000 },
+        "status_kanban": { "type": "string", "enum": ["Dalam Proses", "Perlu Tindak Lanjut", "Selesai Tertangani"] },
+        "author_name": { "type": "string", "maxLength": 160 },
+        "author_role": { "type": "string", "maxLength": 64 },
+        "foto_url": { "type": "string", "maxLength": 600000 },
+        "created_at": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["student_id", "tanggal", "kategori", "topik", "status_kanban"]
+    },
+    "WcMessage": {
+      "title": "WcMessage",
+      "description": "Pesan komunikasi dua arah antar-akun maupun per murid beserta lampiran foto",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "channel_type": { "type": "string", "enum": ["account", "student"] },
+        "target_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "sender_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "sender_name": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "sender_role": { "type": "string", "maxLength": 64 },
+        "text": { "type": "string", "maxLength": 3000 },
+        "foto_url": { "type": "string", "maxLength": 600000 },
+        "created_at": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["channel_type", "target_id", "sender_id", "sender_name", "created_at"]
+    },
+    "WcAnnouncement": {
+      "title": "WcAnnouncement",
+      "description": "Agenda dan pengumuman sekolah beserta poster dokumentasi",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "judul": { "type": "string", "minLength": 1, "maxLength": 240 },
+        "isi": { "type": "string", "minLength": 1, "maxLength": 4000 },
+        "tanggal": { "type": "string", "minLength": 1, "maxLength": 32 },
+        "waktu": { "type": "string", "maxLength": 64 },
+        "lokasi": { "type": "string", "maxLength": 200 },
+        "kategori": { "type": "string", "maxLength": 80 },
+        "author_name": { "type": "string", "maxLength": 160 },
+        "foto_url": { "type": "string", "maxLength": 600000 },
+        "created_at": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["judul", "isi", "tanggal"]
+    },
+    "WcPrintConfig": {
+      "title": "WcPrintConfig",
+      "description": "Pengaturan Kop Surat 6 baris, logo ganda, tahun ajaran, dan tanda tangan dinamis cetak F4",
+      "type": "object",
+      "properties": {
+        "tahun_ajaran": { "type": "string", "maxLength": 64 },
+        "tempat_tanggal": { "type": "string", "maxLength": 160 },
+        "logo_kiri": { "type": "string", "maxLength": 600000 },
+        "logo_kanan": { "type": "string", "maxLength": 600000 },
+        "kop_lines": { "type": "array" },
+        "ttd_layout": { "type": "string", "enum": ["kepsek_guru", "guru_kepsek", "stacked"] },
+        "ttd_offset_x": { "type": "number" },
+        "ttd_left_offset_x": { "type": "number" },
+        "ttd_right_offset_x": { "type": "number" },
+        "ttd_spacer": { "type": "number" },
+        "ttd_align": { "type": "string", "enum": ["left", "center", "right", "justify"] },
+        "ttd_left_rows": { "type": "array" },
+        "ttd_right_rows": { "type": "array" },
+        "nama_sekolah": { "type": "string", "maxLength": 200 },
+        "nama_guru_wali": { "type": "string", "maxLength": 160 },
+        "nip_guru_wali": { "type": "string", "maxLength": 64 },
+        "nama_kepsek": { "type": "string", "maxLength": 160 },
+        "nip_kepsek": { "type": "string", "maxLength": 64 },
+        "orientations": { "type": "object" },
+        "doc_font": { "type": "string", "maxLength": 40 },
+        "ttd_landscape": { "type": "object" }
+      }
+    }
+  },
+  "firestore": {
+    "/artifacts/{appId}/public/data/wc_users/{userId}": {
+      "schema": { "$ref": "#/entities/WcUser" },
+      "description": "Koleksi pengguna multi-peran WaliConnect Pro"
+    },
+    "/artifacts/{appId}/public/data/wc_students/{studentId}": {
+      "schema": { "$ref": "#/entities/WcStudent" },
+      "description": "Koleksi profil murid dampingan lengkap"
+    },
+    "/artifacts/{appId}/public/data/wc_logs/{logId}": {
+      "schema": { "$ref": "#/entities/WcLog" },
+      "description": "Koleksi buku jurnal pertemuan perwalian"
+    },
+    "/artifacts/{appId}/public/data/wc_messages/{messageId}": {
+      "schema": { "$ref": "#/entities/WcMessage" },
+      "description": "Koleksi pesan komunikasi dua arah"
+    },
+    "/artifacts/{appId}/public/data/wc_announcements/{announcementId}": {
+      "schema": { "$ref": "#/entities/WcAnnouncement" },
+      "description": "Koleksi agenda dan pengumuman sekolah"
+    },
+    "/artifacts/{appId}/public/data/wc_settings/{settingId}": {
+      "schema": { "$ref": "#/entities/WcPrintConfig" },
+      "description": "Dokumen konfigurasi cetak F4 (print_config)"
+    }
+  }
+}
