@@ -16,7 +16,7 @@ import {
   TextRun,
   WidthType,
 } from 'docx';
-import { calcAttendancePct } from './imageUtils';
+import { calcAttendancePct, normalizeExternalImageUrl } from './imageUtils';
 import {
   EVALUASI_PERIODES,
   getSnapshotForPeriode,
@@ -68,18 +68,68 @@ export function getSignatureForOrientation(
   };
 }
 
-function getStudentExportColumns(st: WcStudent): Record<string, string | number> {
+function splitTempatTanggalLahir(st: WcStudent): { tempat: string; tanggal: string } {
+  if (st.tempat_lahir || st.tanggal_lahir) {
+    return {
+      tempat: st.tempat_lahir || '',
+      tanggal: st.tanggal_lahir || '',
+    };
+  }
+  const raw = (st.ttl || '').trim();
+  if (!raw) return { tempat: '', tanggal: '' };
+  const commaIdx = raw.indexOf(',');
+  if (commaIdx === -1) return { tempat: raw, tanggal: '' };
   return {
-    'Nama Lengkap': st.nama_lengkap,
-    'Nama Panggilan': st.nama_panggilan,
-    'Jenis Kelamin (L/P)': st.jenis_kelamin,
-    Kelas: st.kelas,
+    tempat: raw.slice(0, commaIdx).trim(),
+    tanggal: raw.slice(commaIdx + 1).trim(),
+  };
+}
+
+function formatExcelCellValue(val: unknown, isDateHint = false): string {
+  if (val === null || val === undefined) return '';
+  if (isDateHint && typeof val === 'number' && val > 1000 && val < 90000) {
+    const parsed = XLSX.SSF.parse_date_code(val);
+    if (parsed && parsed.y && parsed.m && parsed.d) {
+      const months = [
+        'Januari',
+        'Februari',
+        'Maret',
+        'April',
+        'Mei',
+        'Juni',
+        'Juli',
+        'Agustus',
+        'September',
+        'Oktober',
+        'November',
+        'Desember',
+      ];
+      const monthName = months[parsed.m - 1] || String(parsed.m).padStart(2, '0');
+      return `${String(parsed.d).padStart(2, '0')} ${monthName} ${parsed.y}`;
+    }
+  }
+  return String(val).trim();
+}
+
+function getStudentExportColumns(st: WcStudent): Record<string, string | number> {
+  const { tempat, tanggal } = splitTempatTanggalLahir(st);
+  return {
     NIS: st.nis,
     NISN: st.nisn,
-    'Tempat, Tanggal Lahir': st.ttl,
-    'No. WhatsApp': st.whatsapp,
+    Nama: st.nama_lengkap,
+    Kelas: st.kelas,
+    'No Absen': st.no_absen || '',
+    Tempat: tempat,
+    'Tanggal Lahir': tanggal,
     Email: st.email,
-    Alamat: st.alamat,
+    Foto: st.foto_url || '',
+    ALAMAT: st.alamat,
+    NO_HP: st.whatsapp,
+    JENIS_KELAMIN: st.jenis_kelamin,
+    Status: st.status_siswa || 'Aktif',
+    'Wali Kelas': st.wali_kelas || '',
+    'Guru BK': st.guru_bk || '',
+    'Nama Panggilan': st.nama_panggilan,
     Agama: st.agama,
     Hobi: st.hobi,
     'Nama Ayah': st.nama_ayah,
@@ -98,54 +148,56 @@ function getStudentExportColumns(st: WcStudent): Record<string, string | number>
 }
 
 const STUDENT_TEMPLATE_SAMPLE: Record<string, string> = {
-  'Nama Lengkap': 'Aulia Rahman',
-  'Nama Panggilan': 'Aulia',
-  'Jenis Kelamin (L/P)': 'L',
-  Kelas: 'XI MIPA 2',
   NIS: '20241199',
   NISN: '0081234599',
-  'Tempat, Tanggal Lahir': 'Jakarta, 10 Mei 2008',
-  'No. WhatsApp': '081234567890',
+  Nama: 'Aulia Rahman',
+  Kelas: 'XI MIPA 2',
+  'No Absen': '04',
+  Tempat: 'Jakarta',
+  'Tanggal Lahir': '10 Mei 2008',
   Email: 'aulia.rahman@student.sch.id',
-  Alamat: 'Jl. Melati No. 12, Jakarta',
-  Agama: 'Islam',
-  Hobi: 'Membaca, Futsal',
-  'Nama Ayah': 'Rahmat Hidayat',
-  'Pekerjaan Ayah': 'Pegawai Swasta',
-  'Nama Ibu': 'Siti Aminah',
-  'Pekerjaan Ibu': 'Wirausaha',
-  'Alamat Orang Tua': 'Jl. Melati No. 12, Jakarta',
-  'Kontak Orang Tua': '081298765432',
-  'Rencana Pasca Lulus': 'Kuliah',
-  'Program Studi / Bidang': 'Teknik Sipil',
-  'Deskripsi Diri': 'Aktif dalam diskusi kelas dan ekstrakurikuler olahraga.',
-  'Langkah Pencapaian': '1. Meningkatkan nilai Matematika.\n2. Mengikuti bimbingan SNBT.',
-  'Catatan Khusus': 'Perlu pendampingan manajemen waktu belajar.',
+  Foto: '',
+  ALAMAT: 'Jl. Melati No. 12, Jakarta',
+  NO_HP: '081234567890',
+  JENIS_KELAMIN: 'L',
+  Status: 'Aktif',
+  'Wali Kelas': 'Dra. Ratna Sari Dewi, M.Pd.',
+  'Guru BK': 'Drs. Wahyu Pratama, M.Psi.',
 };
 
 function mapRowToStudent(raw: Record<string, unknown>, idx: number): WcStudent | null {
-  const normMap = new Map<string, string>();
+  const normMap = new Map<string, { val: unknown; str: string }>();
   Object.entries(raw).forEach(([k, v]) => {
-    normMap.set(k.trim().toLowerCase(), String(v ?? '').trim());
+    const normKey = k.trim().toLowerCase().replace(/\s+/g, ' ');
+    normMap.set(normKey, { val: v, str: String(v ?? '').trim() });
   });
 
   const pick = (...aliases: string[]): string => {
     for (const a of aliases) {
       const hit = normMap.get(a.toLowerCase());
-      if (hit !== undefined && hit !== '') return hit;
+      if (hit && hit.str !== '') return hit.str;
     }
     return '';
   };
 
-  const namaLengkap = pick('nama lengkap', 'nama', 'nama murid', 'nama siswa');
+  const pickDate = (...aliases: string[]): string => {
+    for (const a of aliases) {
+      const hit = normMap.get(a.toLowerCase());
+      if (hit && hit.str !== '') return formatExcelCellValue(hit.val, true);
+    }
+    return '';
+  };
+
+  const namaLengkap = pick('nama', 'nama lengkap', 'nama murid', 'nama siswa');
   const kelas = pick('kelas');
   const nis = pick('nis') || `IMP${Date.now().toString().slice(-5)}${idx + 1}`;
 
-  if (!namaLengkap && !kelas) return null;
+  if (!namaLengkap && !kelas && !pick('nis')) return null;
 
   const base = createEmptyStudent(`std-imp-${Date.now()}-${idx}`);
-  const jkRaw = pick('jenis kelamin (l/p)', 'jenis kelamin', 'l/p', 'jk').toUpperCase();
-  const jenisKelamin: 'L' | 'P' = jkRaw.startsWith('P') ? 'P' : 'L';
+  const jkRaw = pick('jenis_kelamin', 'jenis kelamin', 'jenis kelamin (l/p)', 'l/p', 'jk').toUpperCase();
+  const jenisKelamin: 'L' | 'P' = jkRaw.startsWith('P') || jkRaw.includes('WANITA') ? 'P' : 'L';
+
   const rencanaRaw = pick('rencana pasca lulus', 'rencana lulus', 'rencana');
   let rencanaLulus: 'Kuliah' | 'Bekerja' | 'Gap-year' | '' = 'Kuliah';
   if (/bekerja|kerja/i.test(rencanaRaw)) rencanaLulus = 'Bekerja';
@@ -153,7 +205,19 @@ function mapRowToStudent(raw: Record<string, unknown>, idx: number): WcStudent |
   else if (/kuliah/i.test(rencanaRaw)) rencanaLulus = 'Kuliah';
 
   const namaPanggilan = pick('nama panggilan', 'panggilan') || namaLengkap.split(' ')[0] || '';
-  const ttl = pick('tempat, tanggal lahir', 'ttl');
+  const tempatLahir = pick('tempat', 'tempat lahir', 'tempat_lahir');
+  const tanggalLahir = pickDate('tanggal lahir', 'tgl lahir', 'tanggal_lahir', 'tgl_lahir');
+  const ttlRaw = pick('tempat, tanggal lahir', 'ttl');
+  const ttl = [tempatLahir, tanggalLahir].filter(Boolean).join(', ') || ttlRaw;
+
+  const fotoRaw = pick('foto', 'foto_url', 'url foto', 'pas foto', 'link foto');
+  const fotoUrl = normalizeExternalImageUrl(fotoRaw);
+
+  const noAbsen = pick('no absen', 'no_absen', 'no. absen', 'absen');
+  const statusSiswa = pick('status', 'status_siswa', 'status murid', 'status siswa') || 'Aktif';
+  const waliKelas = pick('wali kelas', 'wali_kelas', 'walikelas');
+  const guruBk = pick('guru bk', 'guru_bk', 'konselor bk');
+
   const agama = pick('agama') || 'Islam';
   const namaAyah = pick('nama ayah', 'ayah');
   const pekerjaanAyah = pick('pekerjaan ayah');
@@ -167,14 +231,21 @@ function mapRowToStudent(raw: Record<string, unknown>, idx: number): WcStudent |
     nama_panggilan: namaPanggilan,
     jenis_kelamin: jenisKelamin,
     kelas: kelas || 'XI',
+    no_absen: noAbsen,
     nis,
     nisn: pick('nisn'),
+    tempat_lahir: tempatLahir,
+    tanggal_lahir: tanggalLahir,
     ttl,
-    whatsapp: pick('no. whatsapp', 'whatsapp', 'no wa', 'wa', 'hp'),
+    whatsapp: pick('no_hp', 'no hp', 'no. hp', 'hp', 'no. whatsapp', 'whatsapp', 'no wa', 'wa', 'telepon', 'telp'),
     email: pick('email', 'email aktif'),
     alamat: pick('alamat', 'alamat domisili'),
     agama,
     hobi: pick('hobi'),
+    status_siswa: statusSiswa,
+    wali_kelas: waliKelas,
+    guru_bk: guruBk,
+    foto_url: fotoUrl,
     nama_ayah: namaAyah,
     pekerjaan_ayah: pekerjaanAyah,
     nama_ibu: namaIbu,
@@ -208,20 +279,22 @@ export function downloadStudentsXlsTemplate() {
   const wb = XLSX.utils.book_new();
   const wsData = XLSX.utils.json_to_sheet([STUDENT_TEMPLATE_SAMPLE]);
   wsData['!cols'] = Object.keys(STUDENT_TEMPLATE_SAMPLE).map((k) => ({
-    wch: Math.max(16, k.length + 4),
+    wch: Math.max(15, k.length + 5),
   }));
   XLSX.utils.book_append_sheet(wb, wsData, 'Data_Murid');
 
   const guide = [
     ['Petunjuk Pengisian Template Import Data Murid WaliConnect Pro'],
+    ['Urutan 15 Kolom Standar: NIS | NISN | Nama | Kelas | No Absen | Tempat | Tanggal Lahir | Email | Foto | ALAMAT | NO_HP | JENIS_KELAMIN | Status | Wali Kelas | Guru BK'],
     ['1. Jangan mengubah nama kolom pada baris pertama sheet Data_Murid.'],
-    ['2. Kolom wajib diisi: Nama Lengkap, Kelas, dan NIS.'],
-    ['3. Jenis Kelamin diisi huruf L (Laki-laki) atau P (Perempuan).'],
-    ['4. Rencana Pasca Lulus diisi: Kuliah, Bekerja, atau Gap-year.'],
-    ['5. Simpan sebagai .xlsx atau .xls lalu unggah kembali lewat tombol Import XLS / Word.'],
+    ['2. Kolom wajib diisi: NIS, Nama, dan Kelas.'],
+    ['3. JENIS_KELAMIN diisi L (Laki-laki) atau P (Perempuan).'],
+    ['4. Status dapat diisi Aktif, Pindah, Lulus, atau Cuti (bawaan: Aktif).'],
+    ['5. Foto boleh dikosongkan atau diisi tautan URL foto / link Google Drive (pastikan akses "Siapa saja yang memiliki link").'],
+    ['6. Simpan sebagai .xlsx / .xls / .csv lalu unggah lewat tombol Import XLS / Word.'],
   ];
   const wsGuide = XLSX.utils.aoa_to_sheet(guide);
-  wsGuide['!cols'] = [{ wch: 80 }];
+  wsGuide['!cols'] = [{ wch: 110 }];
   XLSX.utils.book_append_sheet(wb, wsGuide, 'Petunjuk');
 
   XLSX.writeFile(wb, 'Template_Data_Murid_WaliConnect.xlsx');
@@ -234,7 +307,7 @@ export function exportStudentsToXls(students: WcStudent[], filename = 'Data_Muri
     rows.length > 0 ? rows : [STUDENT_TEMPLATE_SAMPLE]
   );
   const keys = Object.keys(rows[0] || STUDENT_TEMPLATE_SAMPLE);
-  ws['!cols'] = keys.map((k) => ({ wch: Math.max(16, k.length + 3) }));
+  ws['!cols'] = keys.map((k) => ({ wch: Math.max(15, k.length + 4) }));
   XLSX.utils.book_append_sheet(wb, ws, 'Data_Murid');
   XLSX.writeFile(wb, filename);
 }
@@ -255,30 +328,34 @@ export function exportStudentsToPdf(students: WcStudent[], filename = 'Data_Muri
   autoTable(doc, {
     startY: 27,
     head: [[
-      'No',
-      'Nama Lengkap',
-      'L/P',
-      'Kelas',
+      'No Absen',
       'NIS / NISN',
-      'TTL',
-      'WhatsApp / Email',
-      'Rencana Lulus',
-      'Kontak Ortu',
-      'Hadir',
+      'Nama',
+      'Kelas',
+      'Tempat, Tgl Lahir',
+      'NO_HP / Email',
+      'ALAMAT',
+      'L/P',
+      'Status',
+      'Wali Kelas / Guru BK',
     ]],
-    body: students.map((st, idx) => [
-      idx + 1,
-      st.nama_lengkap,
-      st.jenis_kelamin,
-      st.kelas,
-      `${st.nis}\n${st.nisn || '-'}`,
-      st.ttl || '-',
-      `${st.whatsapp || '-'}\n${st.email || '-'}`,
-      `${st.rencana_lulus || '-'}\n${st.prodi_pilihan || '-'}`,
-      `${st.nama_ayah || st.nama_ibu || '-'}\n${st.kontak_ortu || '-'}`,
-      `${calcAttendancePct(st.kehadiran)}%`,
-    ]),
-    styles: { font: 'times', fontSize: 8.5, cellPadding: 2.2 },
+    body: students.map((st, idx) => {
+      const { tempat, tanggal } = splitTempatTanggalLahir(st);
+      const ttlStr = [tempat, tanggal].filter(Boolean).join(', ') || st.ttl || '-';
+      return [
+        st.no_absen || String(idx + 1),
+        `${st.nis}\n${st.nisn || '-'}`,
+        st.nama_lengkap,
+        st.kelas,
+        ttlStr,
+        `${st.whatsapp || '-'}\n${st.email || '-'}`,
+        st.alamat || '-',
+        st.jenis_kelamin,
+        st.status_siswa || 'Aktif',
+        `Wali: ${st.wali_kelas || '-'}\nBK: ${st.guru_bk || '-'}`,
+      ];
+    }),
+    styles: { font: 'times', fontSize: 8, cellPadding: 2 },
     headStyles: { fillColor: [30, 64, 175], textColor: 255, fontStyle: 'bold' },
   });
 
@@ -291,60 +368,63 @@ export async function exportStudentsToWord(
   filename?: string
 ) {
   const headers = [
-    'Nama Lengkap',
-    'Nama Panggilan',
-    'Jenis Kelamin (L/P)',
-    'Kelas',
     'NIS',
     'NISN',
-    'Tempat, Tanggal Lahir',
-    'No. WhatsApp',
+    'Nama',
+    'Kelas',
+    'No Absen',
+    'Tempat',
+    'Tanggal Lahir',
     'Email',
-    'Alamat',
-    'Nama Ayah',
-    'Nama Ibu',
-    'Kontak Orang Tua',
-    'Rencana Pasca Lulus',
-    'Program Studi / Bidang',
+    'Foto',
+    'ALAMAT',
+    'NO_HP',
+    'JENIS_KELAMIN',
+    'Status',
+    'Wali Kelas',
+    'Guru BK',
   ];
 
   const sourceRows: string[][] = isTemplate
     ? [
         [
-          STUDENT_TEMPLATE_SAMPLE['Nama Lengkap'],
-          STUDENT_TEMPLATE_SAMPLE['Nama Panggilan'],
-          STUDENT_TEMPLATE_SAMPLE['Jenis Kelamin (L/P)'],
-          STUDENT_TEMPLATE_SAMPLE.Kelas,
           STUDENT_TEMPLATE_SAMPLE.NIS,
           STUDENT_TEMPLATE_SAMPLE.NISN,
-          STUDENT_TEMPLATE_SAMPLE['Tempat, Tanggal Lahir'],
-          STUDENT_TEMPLATE_SAMPLE['No. WhatsApp'],
+          STUDENT_TEMPLATE_SAMPLE.Nama,
+          STUDENT_TEMPLATE_SAMPLE.Kelas,
+          STUDENT_TEMPLATE_SAMPLE['No Absen'],
+          STUDENT_TEMPLATE_SAMPLE.Tempat,
+          STUDENT_TEMPLATE_SAMPLE['Tanggal Lahir'],
           STUDENT_TEMPLATE_SAMPLE.Email,
-          STUDENT_TEMPLATE_SAMPLE.Alamat,
-          STUDENT_TEMPLATE_SAMPLE['Nama Ayah'],
-          STUDENT_TEMPLATE_SAMPLE['Nama Ibu'],
-          STUDENT_TEMPLATE_SAMPLE['Kontak Orang Tua'],
-          STUDENT_TEMPLATE_SAMPLE['Rencana Pasca Lulus'],
-          STUDENT_TEMPLATE_SAMPLE['Program Studi / Bidang'],
+          STUDENT_TEMPLATE_SAMPLE.Foto,
+          STUDENT_TEMPLATE_SAMPLE.ALAMAT,
+          STUDENT_TEMPLATE_SAMPLE.NO_HP,
+          STUDENT_TEMPLATE_SAMPLE.JENIS_KELAMIN,
+          STUDENT_TEMPLATE_SAMPLE.Status,
+          STUDENT_TEMPLATE_SAMPLE['Wali Kelas'],
+          STUDENT_TEMPLATE_SAMPLE['Guru BK'],
         ],
       ]
-    : students.map((st) => [
-        st.nama_lengkap,
-        st.nama_panggilan,
-        st.jenis_kelamin,
-        st.kelas,
-        st.nis,
-        st.nisn,
-        st.ttl,
-        st.whatsapp,
-        st.email,
-        st.alamat,
-        st.nama_ayah,
-        st.nama_ibu,
-        st.kontak_ortu,
-        st.rencana_lulus,
-        st.prodi_pilihan,
-      ]);
+    : students.map((st) => {
+        const { tempat, tanggal } = splitTempatTanggalLahir(st);
+        return [
+          st.nis,
+          st.nisn,
+          st.nama_lengkap,
+          st.kelas,
+          st.no_absen || '',
+          tempat,
+          tanggal,
+          st.email,
+          st.foto_url || '',
+          st.alamat,
+          st.whatsapp,
+          st.jenis_kelamin,
+          st.status_siswa || 'Aktif',
+          st.wali_kelas || '',
+          st.guru_bk || '',
+        ];
+      });
 
   const tableRows = [
     new TableRow({
@@ -355,7 +435,7 @@ export async function exportStudentsToWord(
             shading: { fill: 'E2E8F0' },
             children: [
               new Paragraph({
-                children: [new TextRun({ text: h, bold: true, size: 16 })],
+                children: [new TextRun({ text: h, bold: true, size: 15 })],
               }),
             ],
           })
@@ -369,7 +449,7 @@ export async function exportStudentsToWord(
               new TableCell({
                 children: [
                   new Paragraph({
-                    children: [new TextRun({ text: val || '-', size: 16 })],
+                    children: [new TextRun({ text: val || '-', size: 15 })],
                   }),
                 ],
               })

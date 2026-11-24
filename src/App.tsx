@@ -15,10 +15,12 @@ import {
   Menu,
   X,
   ShieldCheck,
+  SlidersHorizontal,
 } from 'lucide-react';
 import { onSnapshot } from 'firebase/firestore';
 import {
   COLLECTIONS,
+  DEFAULT_APP_CONFIG,
   DEFAULT_LOGO_URL,
   DEFAULT_PRINT_CONFIG,
   colRef,
@@ -28,6 +30,7 @@ import {
   seedFullEcosystem,
   testConnection,
 } from './lib/firebase';
+import { applyAppTheme } from './lib/themeUtils';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { LoginView } from './components/LoginView';
 import { DashboardHome } from './components/DashboardHome';
@@ -38,10 +41,12 @@ import { CommunicationView } from './components/CommunicationView';
 import { AnnouncementsView } from './components/AnnouncementsView';
 import { AccountsView } from './components/AccountsView';
 import { PrintSystemView } from './components/PrintSystemView';
+import { AdminSettingsView } from './components/AdminSettingsView';
 import type {
   NavTabId,
   UserRole,
   WcAnnouncement,
+  WcAppConfig,
   WcLog,
   WcMessage,
   WcPrintConfig,
@@ -81,7 +86,7 @@ function getMenuForRole(role: UserRole): MenuItem[] {
   if (role === 'Siswa') {
     return [
       { id: 'home', label: 'Beranda Saya', icon: <LayoutDashboard className="w-4 h-4" /> },
-      { id: 'students', label: 'Biodata & Rencana Lulus', icon: <Users className="w-4 h-4" /> },
+      { id: 'students', label: 'Profil & Data Diri Saya', icon: <Users className="w-4 h-4" /> },
       { id: 'attendance_aspects', label: 'Rekap Hadir & 5 Aspek', icon: <ClipboardCheck className="w-4 h-4" /> },
       { id: 'journal', label: 'Riwayat Bimbingan Saya', icon: <BookOpen className="w-4 h-4" /> },
       { id: 'communication', label: 'Tanya Guru Wali', icon: <MessageSquare className="w-4 h-4" /> },
@@ -98,6 +103,7 @@ function getMenuForRole(role: UserRole): MenuItem[] {
     { id: 'announcements', label: 'Papan Informasi Sekolah', icon: <Megaphone className="w-4 h-4" /> },
     { id: 'accounts', label: 'Manajemen Akun & Role', icon: <UserCog className="w-4 h-4" /> },
     { id: 'print_f4', label: 'Arsip & Cetak SOP (F4)', icon: <Printer className="w-4 h-4" /> },
+    { id: 'admin_settings', label: 'Pengaturan Aplikasi & Tema', icon: <SlidersHorizontal className="w-4 h-4" /> },
   ];
 }
 
@@ -112,6 +118,7 @@ function WaliConnectApp() {
   const [messages, setMessages] = useState<WcMessage[]>([]);
   const [announcements, setAnnouncements] = useState<WcAnnouncement[]>([]);
   const [printConfig, setPrintConfig] = useState<WcPrintConfig>(DEFAULT_PRINT_CONFIG);
+  const [appConfig, setAppConfig] = useState<WcAppConfig>(DEFAULT_APP_CONFIG);
 
   const [currentUserId, setCurrentUserId] = useState<string | null>(() => {
     return localStorage.getItem('wc_session_user_id');
@@ -127,6 +134,10 @@ function WaliConnectApp() {
     document.documentElement.classList.toggle('dark', darkMode);
     localStorage.setItem('wc_dark_mode', String(darkMode));
   }, [darkMode]);
+
+  useEffect(() => {
+    applyAppTheme(appConfig);
+  }, [appConfig]);
 
   useEffect(() => {
     testConnection();
@@ -190,6 +201,20 @@ function WaliConnectApp() {
       (err) => handleFirestoreError(err, OperationType.GET, `${COLLECTIONS.settings}/print_config`)
     );
 
+    const unsubAppSettings = onSnapshot(
+      docRef(COLLECTIONS.settings, 'app_config'),
+      (snap) => {
+        if (snap.exists()) {
+          const next = { ...DEFAULT_APP_CONFIG, ...(snap.data() as Partial<WcAppConfig>) };
+          setAppConfig(next);
+          if (localStorage.getItem('wc_dark_mode') === null) {
+            setDarkMode(next.default_theme_mode === 'dark');
+          }
+        }
+      },
+      (err) => handleFirestoreError(err, OperationType.GET, `${COLLECTIONS.settings}/app_config`)
+    );
+
     return () => {
       unsubUsers();
       unsubStudents();
@@ -197,6 +222,7 @@ function WaliConnectApp() {
       unsubMessages();
       unsubAnnouncements();
       unsubSettings();
+      unsubAppSettings();
     };
   }, []);
 
@@ -239,6 +265,7 @@ function WaliConnectApp() {
       <LoginView
         users={users}
         students={students}
+        appConfig={appConfig}
         darkMode={darkMode}
         onToggleDark={() => setDarkMode((d) => !d)}
         onLoginSuccess={handleLoginSuccess}
@@ -250,19 +277,30 @@ function WaliConnectApp() {
 
   const menuItems = getMenuForRole(currentUser.role);
   const currentMenu = menuItems.find((m) => m.id === activeTab) ?? menuItems[0];
+  const appTitle = appConfig.app_name || DEFAULT_APP_CONFIG.app_name;
+  const appLogo = appConfig.app_logo || DEFAULT_LOGO_URL;
+
+  const anyPerwalianConfigured = students.some((s) => Boolean(s.guru_wali_id));
+  const myPerwalianStudents = students.filter((s) => s.guru_wali_id === currentUser.id);
+  const effectiveStudents =
+    currentUser.role === 'Guru Wali' && anyPerwalianConfigured ? myPerwalianStudents : students;
+  const effectiveLogs =
+    currentUser.role === 'Guru Wali' && anyPerwalianConfigured
+      ? logs.filter((l) => effectiveStudents.some((s) => s.id === l.student_id))
+      : logs;
 
   const renderSidebarContent = () => (
     <div className="flex flex-col h-full">
       <div className="px-5 py-5 border-b border-slate-200 dark:border-slate-800 flex items-center gap-3">
         <img
-          src={DEFAULT_LOGO_URL}
-          alt="Logo Sekolah"
+          src={appLogo}
+          alt={`Logo ${appTitle}`}
           referrerPolicy="no-referrer"
           className="w-9 h-9 rounded-xl object-contain border border-slate-200 dark:border-slate-700 bg-white p-0.5 shrink-0"
         />
         <div className="min-w-0">
           <p className="text-sm font-extrabold tracking-tight text-slate-900 dark:text-white truncate">
-            WaliConnect Pro
+            {appTitle}
           </p>
           <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
             {currentUser.role}
@@ -296,11 +334,12 @@ function WaliConnectApp() {
         <div className="m-3 p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700">
           <div className="flex items-center gap-2 text-blue-600 dark:text-blue-400 mb-1.5">
             <ShieldCheck className="w-4 h-4 shrink-0" />
-            <span className="text-[11px] font-bold">SOP Guru Wali Resmi</span>
+            <span className="text-[11px] font-bold">
+              {appConfig.sidebar_sop_title || DEFAULT_APP_CONFIG.sidebar_sop_title}
+            </span>
           </div>
           <p className="text-[11px] text-slate-600 dark:text-slate-300 leading-relaxed">
-            Ekuivalensi beban kerja <strong>2 JP / Minggu</strong> sesuai regulasi{' '}
-            <strong>Permendikdasmen No. 11/2025</strong>.
+            {appConfig.sidebar_sop_desc || DEFAULT_APP_CONFIG.sidebar_sop_desc}
           </p>
         </div>
       )}
@@ -360,7 +399,7 @@ function WaliConnectApp() {
             </button>
             <div className="min-w-0">
               <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
-                WaliConnect Pro / {currentUser.role}
+                {appTitle} / {currentUser.role}
               </p>
               <h1 className="text-sm sm:text-base font-bold text-slate-900 dark:text-white truncate">
                 {currentMenu.label}
@@ -402,12 +441,31 @@ function WaliConnectApp() {
 
         {/* Active View Content */}
         <main className="flex-1 p-4 sm:p-6 max-w-[1440px] w-full mx-auto">
+          {currentUser.role === 'Guru Wali' &&
+            anyPerwalianConfigured &&
+            myPerwalianStudents.length === 0 &&
+            currentMenu.id !== 'accounts' && (
+              <div className="mb-5 px-4 py-3 rounded-2xl bg-amber-50 dark:bg-amber-950/50 border border-amber-200 dark:border-amber-800 flex flex-wrap items-center justify-between gap-3 text-xs text-amber-800 dark:text-amber-200">
+                <span>
+                  Belum ada siswa perwalian yang ditetapkan untuk akun Anda. Silakan pilih siswa perwalian di menu{' '}
+                  <strong>Tautan Akun Wali</strong> atau hubungi Admin.
+                </span>
+                <button
+                  type="button"
+                  onClick={() => handleNavigate('accounts')}
+                  className="px-3 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-semibold cursor-pointer"
+                >
+                  Pilih Siswa Perwalian
+                </button>
+              </div>
+            )}
+
           {currentMenu.id === 'home' && (
             <DashboardHome
               currentUser={currentUser}
               users={users}
-              students={students}
-              logs={logs}
+              students={effectiveStudents}
+              logs={effectiveLogs}
               announcements={announcements}
               darkMode={darkMode}
               onNavigate={handleNavigate}
@@ -416,9 +474,11 @@ function WaliConnectApp() {
 
           {currentMenu.id === 'students' && (
             <StudentsView
-              students={students}
+              students={effectiveStudents}
               role={currentUser.role}
               linkedStudentId={currentUser.linked_student_id}
+              currentUser={currentUser}
+              users={users}
               searchQuery={searchQuery}
               initialSelectedId={focusStudentId}
             />
@@ -426,8 +486,8 @@ function WaliConnectApp() {
 
           {currentMenu.id === 'attendance_aspects' && (
             <AttendanceAspectsView
-              students={students}
-              logs={logs}
+              students={effectiveStudents}
+              logs={effectiveLogs}
               role={currentUser.role}
               linkedStudentId={currentUser.linked_student_id}
             />
@@ -435,8 +495,8 @@ function WaliConnectApp() {
 
           {currentMenu.id === 'journal' && (
             <JournalView
-              logs={logs}
-              students={students}
+              logs={effectiveLogs}
+              students={effectiveStudents}
               currentUser={currentUser}
               searchQuery={searchQuery}
             />
@@ -446,7 +506,7 @@ function WaliConnectApp() {
             <CommunicationView
               messages={messages}
               users={users}
-              students={students}
+              students={effectiveStudents}
               currentUser={currentUser}
               searchQuery={searchQuery}
             />
@@ -470,8 +530,20 @@ function WaliConnectApp() {
           {currentMenu.id === 'print_f4' && (
             <PrintSystemView
               config={printConfig}
+              students={effectiveStudents}
+              logs={effectiveLogs}
+            />
+          )}
+
+          {currentMenu.id === 'admin_settings' && currentUser.role === 'Admin' && (
+            <AdminSettingsView
+              appConfig={appConfig}
+              printConfig={printConfig}
+              darkMode={darkMode}
+              onSetDarkMode={setDarkMode}
+              users={users}
               students={students}
-              logs={logs}
+              currentUser={currentUser}
             />
           )}
         </main>

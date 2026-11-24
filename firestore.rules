@@ -37,8 +37,9 @@ service cloud.firestore {
     function isValidWcStudent(data) {
       return data.keys().hasAll(['nama_lengkap', 'kelas', 'nis'])
         && data.keys().hasOnly([
-          'id', 'nama_lengkap', 'nama_panggilan', 'jenis_kelamin', 'kelas', 'nis', 'nisn',
-          'ttl', 'whatsapp', 'email', 'alamat', 'agama', 'hobi',
+          'id', 'nama_lengkap', 'nama_panggilan', 'jenis_kelamin', 'kelas', 'no_absen',
+          'nis', 'nisn', 'tempat_lahir', 'tanggal_lahir', 'ttl', 'whatsapp', 'email',
+          'alamat', 'agama', 'hobi', 'status_siswa', 'guru_wali_id', 'guru_wali_nama', 'wali_kelas', 'guru_bk',
           'nama_ayah', 'pekerjaan_ayah', 'nama_ibu', 'pekerjaan_ibu', 'alamat_ortu', 'kontak_ortu',
           'deskripsi_diri', 'rencana_lulus', 'prodi_pilihan', 'langkah_pencapaian', 'catatan_khusus',
           'foto_url', 'kehadiran', 'perkembangan', 'bk_detail', 'updated_at'
@@ -48,14 +49,22 @@ service cloud.firestore {
         && isOptStr(data, 'nama_panggilan', 80)
         && (!('jenis_kelamin' in data) || data.jenis_kelamin in ['L', 'P'])
         && isStr(data.kelas, 1, 64)
+        && isOptStr(data, 'no_absen', 32)
         && isStr(data.nis, 1, 64)
         && isOptStr(data, 'nisn', 64)
+        && isOptStr(data, 'tempat_lahir', 100)
+        && isOptStr(data, 'tanggal_lahir', 64)
         && isOptStr(data, 'ttl', 160)
         && isOptStr(data, 'whatsapp', 40)
         && isOptStr(data, 'email', 120)
         && isOptStr(data, 'alamat', 400)
         && isOptStr(data, 'agama', 40)
         && isOptStr(data, 'hobi', 200)
+        && isOptStr(data, 'status_siswa', 40)
+        && isOptStr(data, 'guru_wali_id', 128)
+        && isOptStr(data, 'guru_wali_nama', 160)
+        && isOptStr(data, 'wali_kelas', 160)
+        && isOptStr(data, 'guru_bk', 160)
         && isOptStr(data, 'nama_ayah', 160)
         && isOptStr(data, 'pekerjaan_ayah', 160)
         && isOptStr(data, 'nama_ibu', 160)
@@ -163,6 +172,36 @@ service cloud.firestore {
         && (!('ttd_landscape' in data) || data.ttd_landscape is map);
     }
 
+    function isValidWcAppConfig(data) {
+      return data.keys().hasOnly([
+          'app_name', 'app_subtitle', 'app_logo', 'school_name',
+          'sidebar_sop_title', 'sidebar_sop_desc',
+          'allow_registration', 'allowed_register_roles',
+          'show_quick_login', 'show_demo_seed',
+          'default_theme_mode', 'theme_accent', 'login_bg_preset', 'ui_density',
+          'updated_at'
+        ])
+        && isOptStr(data, 'app_name', 120)
+        && isOptStr(data, 'app_subtitle', 300)
+        && isOptStr(data, 'app_logo', 600000)
+        && isOptStr(data, 'school_name', 200)
+        && isOptStr(data, 'sidebar_sop_title', 120)
+        && isOptStr(data, 'sidebar_sop_desc', 400)
+        && (!('allow_registration' in data) || data.allow_registration is bool)
+        && (!('allowed_register_roles' in data) || (
+          data.allowed_register_roles is list &&
+          data.allowed_register_roles.size() <= 4 &&
+          data.allowed_register_roles.hasOnly(['Guru Wali', 'Orang Tua', 'Siswa', 'Admin'])
+        ))
+        && (!('show_quick_login' in data) || data.show_quick_login is bool)
+        && (!('show_demo_seed' in data) || data.show_demo_seed is bool)
+        && (!('default_theme_mode' in data) || data.default_theme_mode in ['light', 'dark'])
+        && (!('theme_accent' in data) || data.theme_accent in ['blue', 'indigo', 'emerald', 'teal', 'violet', 'rose', 'amber', 'slate'])
+        && (!('login_bg_preset' in data) || data.login_bg_preset in ['ice_blue', 'emerald_mint', 'indigo_dusk', 'warm_slate'])
+        && (!('ui_density' in data) || data.ui_density in ['comfortable', 'compact'])
+        && isOptStr(data, 'updated_at', 64);
+    }
+
     match /artifacts/{appId}/public/data/wc_users/{userId} {
       allow list: if isValidAppId(appId);
       allow get: if isValidAppId(appId) && isValidId(userId);
@@ -201,7 +240,10 @@ service cloud.firestore {
     match /artifacts/{appId}/public/data/wc_settings/{settingId} {
       allow list: if isValidAppId(appId);
       allow get: if isValidAppId(appId) && isValidId(settingId);
-      allow create, update: if isValidAppId(appId) && isValidId(settingId) && isValidWcPrintConfig(request.resource.data);
+      allow create, update: if isValidAppId(appId) && isValidId(settingId) && (
+        (settingId == 'print_config' && isValidWcPrintConfig(request.resource.data)) ||
+        (settingId == 'app_config' && isValidWcAppConfig(request.resource.data))
+      );
       allow delete: if isValidAppId(appId) && isValidId(settingId);
     }
 

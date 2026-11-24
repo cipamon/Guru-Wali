@@ -11,6 +11,7 @@ import {
   hasSnapshotContent,
   normalizeEvaluasiPeriode,
 } from '../lib/aspectPeriods';
+import { StudentInfoModal } from './StudentInfoModal';
 import type {
   EvaluasiPeriode,
   PerkembanganSnapshot,
@@ -41,6 +42,7 @@ export const AttendanceAspectsView: React.FC<AttendanceAspectsViewProps> = ({
   linkedStudentId,
 }) => {
   const canEdit = role === 'Guru Wali' || role === 'Admin';
+  const [infoStudent, setInfoStudent] = useState<WcStudent | null>(null);
   const visibleStudents = canEdit
     ? students
     : students.filter((s) => !linkedStudentId || s.id === linkedStudentId);
@@ -230,11 +232,18 @@ export const AttendanceAspectsView: React.FC<AttendanceAspectsViewProps> = ({
                       selectedStudent?.id === st.id ? 'bg-blue-50/50 dark:bg-blue-950/20' : ''
                     }`}
                   >
-                    <td
-                      onClick={() => setSelectedId(st.id)}
-                      className="py-3 px-4 font-semibold text-slate-900 dark:text-white cursor-pointer"
-                    >
-                      {st.nama_lengkap}
+                    <td className="py-3 px-4 font-semibold text-slate-900 dark:text-white">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedId(st.id);
+                          setInfoStudent(st);
+                        }}
+                        title="Klik nama untuk melihat pop-up informasi murid"
+                        className="text-left font-bold hover:text-blue-600 dark:hover:text-blue-400 hover:underline cursor-pointer"
+                      >
+                        {st.nama_lengkap}
+                      </button>
                     </td>
                     <td className="py-3 px-3 text-slate-500 dark:text-slate-400">{st.kelas}</td>
                     {Array.from({ length: 9 }, (_, idx) => {
@@ -284,7 +293,16 @@ export const AttendanceAspectsView: React.FC<AttendanceAspectsViewProps> = ({
                 Evaluasi 5 Aspek Perkembangan Murid (Lampiran B)
               </h2>
               <p className="text-xs text-slate-500 dark:text-slate-400">
-                Murid terpilih: <strong>{selectedStudent.nama_lengkap}</strong> ({selectedStudent.kelas}) · Siklus{' '}
+                Murid terpilih:{' '}
+                <button
+                  type="button"
+                  onClick={() => setInfoStudent(selectedStudent)}
+                  title="Klik nama untuk melihat pop-up informasi murid"
+                  className="font-bold text-slate-900 dark:text-white hover:text-blue-600 dark:hover:text-blue-400 hover:underline cursor-pointer"
+                >
+                  {selectedStudent.nama_lengkap}
+                </button>{' '}
+                ({selectedStudent.kelas}) · Siklus{' '}
                 <strong>{activePeriode}</strong> ({activePeriodMeta?.hint})
               </p>
             </div>
@@ -417,6 +435,13 @@ export const AttendanceAspectsView: React.FC<AttendanceAspectsViewProps> = ({
           )}
         </div>
       )}
+      <StudentInfoModal
+        student={infoStudent}
+        onClose={() => setInfoStudent(null)}
+        logsCount={
+          infoStudent ? logs.filter((l) => l.student_id === infoStudent.id).length : undefined
+        }
+      />
     </div>
   );
 };

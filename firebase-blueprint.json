@@ -26,14 +26,22 @@
         "nama_panggilan": { "type": "string", "maxLength": 80 },
         "jenis_kelamin": { "type": "string", "enum": ["L", "P"] },
         "kelas": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "no_absen": { "type": "string", "maxLength": 32 },
         "nis": { "type": "string", "minLength": 1, "maxLength": 64 },
         "nisn": { "type": "string", "maxLength": 64 },
+        "tempat_lahir": { "type": "string", "maxLength": 100 },
+        "tanggal_lahir": { "type": "string", "maxLength": 64 },
         "ttl": { "type": "string", "maxLength": 160 },
         "whatsapp": { "type": "string", "maxLength": 40 },
         "email": { "type": "string", "maxLength": 120 },
         "alamat": { "type": "string", "maxLength": 400 },
         "agama": { "type": "string", "maxLength": 40 },
         "hobi": { "type": "string", "maxLength": 200 },
+        "status_siswa": { "type": "string", "maxLength": 40 },
+        "guru_wali_id": { "type": "string", "maxLength": 128 },
+        "guru_wali_nama": { "type": "string", "maxLength": 160 },
+        "wali_kelas": { "type": "string", "maxLength": 160 },
+        "guru_bk": { "type": "string", "maxLength": 160 },
         "nama_ayah": { "type": "string", "maxLength": 160 },
         "pekerjaan_ayah": { "type": "string", "maxLength": 160 },
         "nama_ibu": { "type": "string", "maxLength": 160 },
@@ -137,6 +145,28 @@
         "doc_font": { "type": "string", "maxLength": 40 },
         "ttd_landscape": { "type": "object" }
       }
+    },
+    "WcAppConfig": {
+      "title": "WcAppConfig",
+      "description": "Pengaturan identitas aplikasi, halaman login, registrasi, dan tema visual Admin",
+      "type": "object",
+      "properties": {
+        "app_name": { "type": "string", "maxLength": 120 },
+        "app_subtitle": { "type": "string", "maxLength": 300 },
+        "app_logo": { "type": "string", "maxLength": 600000 },
+        "school_name": { "type": "string", "maxLength": 200 },
+        "sidebar_sop_title": { "type": "string", "maxLength": 120 },
+        "sidebar_sop_desc": { "type": "string", "maxLength": 400 },
+        "allow_registration": { "type": "boolean" },
+        "allowed_register_roles": { "type": "array" },
+        "show_quick_login": { "type": "boolean" },
+        "show_demo_seed": { "type": "boolean" },
+        "default_theme_mode": { "type": "string", "enum": ["light", "dark"] },
+        "theme_accent": { "type": "string", "enum": ["blue", "indigo", "emerald", "teal", "violet", "rose", "amber", "slate"] },
+        "login_bg_preset": { "type": "string", "enum": ["ice_blue", "emerald_mint", "indigo_dusk", "warm_slate"] },
+        "ui_density": { "type": "string", "enum": ["comfortable", "compact"] },
+        "updated_at": { "type": "string", "maxLength": 64 }
+      }
     }
   },
   "firestore": {
@@ -162,7 +192,7 @@
     },
     "/artifacts/{appId}/public/data/wc_settings/{settingId}": {
       "schema": { "$ref": "#/entities/WcPrintConfig" },
-      "description": "Dokumen konfigurasi cetak F4 (print_config)"
+      "description": "Dokumen konfigurasi sistem (print_config dan app_config)"
     }
   }
 }

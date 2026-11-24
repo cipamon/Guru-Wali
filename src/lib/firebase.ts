@@ -12,6 +12,7 @@ import firebaseConfig from '../../firebase-applet-config.json';
 import type {
   BkDetail,
   WcAnnouncement,
+  WcAppConfig,
   WcLog,
   WcMessage,
   WcPrintConfig,
@@ -280,14 +281,22 @@ export function createEmptyStudent(id: string): WcStudent {
     nama_panggilan: '',
     jenis_kelamin: 'L',
     kelas: 'XI-A',
+    no_absen: '',
     nis: '',
     nisn: '',
+    tempat_lahir: '',
+    tanggal_lahir: '',
     ttl: '',
     whatsapp: '',
     email: '',
     alamat: '',
     agama: 'Islam',
     hobi: '',
+    status_siswa: 'Aktif',
+    guru_wali_id: '',
+    guru_wali_nama: '',
+    wali_kelas: '',
+    guru_bk: '',
     nama_ayah: '',
     pekerjaan_ayah: '',
     nama_ibu: '',
@@ -326,14 +335,22 @@ export async function seedFullEcosystem(): Promise<void> {
       nama_panggilan: 'Bimo',
       jenis_kelamin: 'L',
       kelas: 'XI MIPA 1',
+      no_absen: '05',
       nis: '20241101',
       nisn: '0084512301',
+      tempat_lahir: 'Jakarta',
+      tanggal_lahir: '14 Mei 2008',
       ttl: 'Jakarta, 14 Mei 2008',
       whatsapp: '081288901122',
       email: 'bimo.setiawan@student.sman1jayakarta.sch.id',
       alamat: 'Jl. Cempaka Putih Tengah No. 18, Jakarta Pusat',
       agama: 'Islam',
       hobi: 'Robotika, Pemrograman Python, Catur',
+      status_siswa: 'Aktif',
+      guru_wali_id: 'usr-guru-01',
+      guru_wali_nama: 'Dra. Ratna Sari Dewi, M.Pd.',
+      wali_kelas: 'Dra. Ratna Sari Dewi, M.Pd.',
+      guru_bk: 'Drs. Wahyu Pratama, M.Psi.',
       nama_ayah: 'Hendra Setiawan, S.T.',
       pekerjaan_ayah: 'Insinyur Sipil',
       nama_ibu: 'Sri Wahyuni, S.E.',
@@ -445,14 +462,22 @@ export async function seedFullEcosystem(): Promise<void> {
       nama_panggilan: 'Nadira',
       jenis_kelamin: 'P',
       kelas: 'XI IPS 2',
+      no_absen: '18',
       nis: '20241102',
       nisn: '0089123402',
+      tempat_lahir: 'Bandung',
+      tanggal_lahir: '22 Agustus 2008',
       ttl: 'Bandung, 22 Agustus 2008',
       whatsapp: '081377654321',
       email: 'nadira.putri@student.sman1jayakarta.sch.id',
       alamat: 'Jl. Rawamangun Muka Selatan No. 9, Jakarta Timur',
       agama: 'Islam',
       hobi: 'Desain Grafis, Debat Bahasa Inggris, Fotografi',
+      status_siswa: 'Aktif',
+      guru_wali_id: 'usr-guru-01',
+      guru_wali_nama: 'Dra. Ratna Sari Dewi, M.Pd.',
+      wali_kelas: 'Dra. Ratna Sari Dewi, M.Pd.',
+      guru_bk: 'Drs. Wahyu Pratama, M.Psi.',
       nama_ayah: 'Budi Santoso',
       pekerjaan_ayah: 'Wiraswasta Kuliner',
       nama_ibu: 'Dewi Lestari, S.Pd.',
@@ -768,6 +793,24 @@ export async function seedFullEcosystem(): Promise<void> {
   }
 }
 
+export const DEFAULT_APP_CONFIG: WcAppConfig = {
+  app_name: 'WaliConnect Pro',
+  app_subtitle: 'Sistem Guru Wali & Perwalian Sekolah Terpadu · Permendikdasmen No. 11/2025',
+  app_logo: DEFAULT_LOGO_URL,
+  school_name: 'SMA NEGERI 1 JAYAKARTA',
+  sidebar_sop_title: 'SOP Guru Wali Resmi',
+  sidebar_sop_desc:
+    'Ekuivalensi beban kerja 2 JP / Minggu sesuai regulasi Permendikdasmen No. 11/2025.',
+  allow_registration: true,
+  allowed_register_roles: ['Guru Wali', 'Orang Tua', 'Siswa', 'Admin'],
+  show_quick_login: true,
+  show_demo_seed: true,
+  default_theme_mode: 'light',
+  theme_accent: 'blue',
+  login_bg_preset: 'ice_blue',
+  ui_density: 'comfortable',
+};
+
 export async function savePrintConfig(config: WcPrintConfig): Promise<void> {
   try {
     await setDoc(doc(db, COLLECTIONS.settings, 'print_config'), config);
@@ -775,3 +818,15 @@ export async function savePrintConfig(config: WcPrintConfig): Promise<void> {
     handleFirestoreError(error, OperationType.WRITE, `${COLLECTIONS.settings}/print_config`);
   }
 }
+
+export async function saveAppConfig(config: WcAppConfig): Promise<void> {
+  try {
+    await setDoc(doc(db, COLLECTIONS.settings, 'app_config'), {
+      ...config,
+      updated_at: new Date().toISOString(),
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, `${COLLECTIONS.settings}/app_config`);
+  }
+}
+

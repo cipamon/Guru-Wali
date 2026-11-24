@@ -26,6 +26,8 @@ import {
   CategoryStackedBarChart,
   JournalDonutChart,
 } from './D3Charts';
+import { SmartPhoto } from './SmartPhoto';
+import { StudentInfoModal } from './StudentInfoModal';
 import type {
   EvaluasiPeriode,
   KanbanStatus,
@@ -62,6 +64,7 @@ export const DashboardHome: React.FC<DashboardHomeProps> = ({
   onNavigate,
 }) => {
   const [aspectPeriodeOverride, setAspectPeriodeOverride] = useState<EvaluasiPeriode | null>(null);
+  const [infoStudent, setInfoStudent] = useState<WcStudent | null>(null);
 
   const handleMoveKanban = async (logItem: WcLog, newStatus: KanbanStatus) => {
     if (logItem.status_kanban === newStatus) return;
@@ -76,18 +79,37 @@ export const DashboardHome: React.FC<DashboardHomeProps> = ({
 
   // Parent & Student specific home views
   if (currentUser.role === 'Orang Tua' || currentUser.role === 'Siswa') {
-    const linkedStudent =
-      students.find((s) => s.id === currentUser.linked_student_id) ?? students[0];
+    const linkedStudent = students.find((s) =>
+      currentUser.linked_student_id
+        ? s.id === currentUser.linked_student_id
+        : s.nis.trim().toLowerCase() === currentUser.nip.trim().toLowerCase()
+    );
 
     if (!linkedStudent) {
       return (
-        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-8 text-center">
-          <h2 className="text-lg font-bold text-slate-900 dark:text-white mb-2">
-            Profil Murid Belum Tertaut
-          </h2>
-          <p className="text-sm text-slate-600 dark:text-slate-400">
-            Hubungi Guru Wali atau Admin BK untuk menautkan akun Anda ke profil murid.
-          </p>
+        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-8 text-center space-y-4">
+          <div>
+            <h2 className="text-lg font-bold text-slate-900 dark:text-white mb-2">
+              {currentUser.role === 'Siswa'
+                ? 'Profil Data Diri Anda Belum Terisi'
+                : 'Profil Murid Belum Tertaut'}
+            </h2>
+            <p className="text-sm text-slate-600 dark:text-slate-400">
+              {currentUser.role === 'Siswa'
+                ? 'Silakan isi data diri profil Anda (biodata, pas foto, dan data orang tua) terlebih dahulu.'
+                : 'Hubungi Guru Wali atau Admin BK untuk menautkan akun Anda ke profil murid.'}
+            </p>
+          </div>
+          {currentUser.role === 'Siswa' && (
+            <button
+              type="button"
+              onClick={() => onNavigate('students')}
+              className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold cursor-pointer"
+            >
+              <Sparkles className="w-4 h-4" />
+              <span>Isi Data Diri Profil Sekarang</span>
+            </button>
+          )}
         </div>
       );
     }
@@ -110,20 +132,22 @@ export const DashboardHome: React.FC<DashboardHomeProps> = ({
         {/* Highlight Profile Card */}
         <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6">
           <div className="flex flex-col md:flex-row md:items-center gap-6">
-            <div className="w-24 h-32 rounded-xl overflow-hidden bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shrink-0 flex items-center justify-center">
-              {linkedStudent.foto_url ? (
-                <img
-                  src={linkedStudent.foto_url}
-                  alt={linkedStudent.nama_lengkap}
-                  referrerPolicy="no-referrer"
-                  className="w-full h-full object-cover"
-                />
-              ) : (
-                <span className="text-xl font-bold text-slate-400">
-                  {linkedStudent.nama_lengkap.slice(0, 2).toUpperCase()}
-                </span>
-              )}
-            </div>
+            <button
+              type="button"
+              onClick={() => setInfoStudent(linkedStudent)}
+              title="Klik untuk melihat pop-up informasi murid"
+              className="w-24 h-32 rounded-xl overflow-hidden bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shrink-0 flex items-center justify-center cursor-pointer hover:ring-2 hover:ring-blue-500/50 transition-all"
+            >
+              <SmartPhoto
+                src={linkedStudent.foto_url}
+                alt={linkedStudent.nama_lengkap}
+                fallback={
+                  <span className="text-xl font-bold text-slate-400">
+                    {linkedStudent.nama_lengkap.slice(0, 2).toUpperCase()}
+                  </span>
+                }
+              />
+            </button>
 
             <div className="flex-1 min-w-0">
               <p className="text-xs font-semibold text-blue-600 dark:text-blue-400 mb-1">
@@ -131,11 +155,18 @@ export const DashboardHome: React.FC<DashboardHomeProps> = ({
                   ? 'Profil Putra / Putri Tertaut'
                   : 'Profil Murid Dampingan'}
               </p>
-              <h2 className="text-2xl font-bold text-slate-900 dark:text-white truncate">
+              <button
+                type="button"
+                onClick={() => setInfoStudent(linkedStudent)}
+                title="Klik nama untuk melihat pop-up informasi murid"
+                className="text-left text-2xl font-bold text-slate-900 dark:text-white hover:text-blue-600 dark:hover:text-blue-400 hover:underline truncate cursor-pointer block max-w-full"
+              >
                 {linkedStudent.nama_lengkap}
-              </h2>
+              </button>
               <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
                 Kelas {linkedStudent.kelas} · NIS {linkedStudent.nis} · NISN {linkedStudent.nisn || '-'}
+                {(linkedStudent.guru_wali_nama || linkedStudent.wali_kelas) &&
+                  ` · Guru Wali: ${linkedStudent.guru_wali_nama || linkedStudent.wali_kelas}`}
               </p>
 
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mt-5 pt-4 border-t border-slate-100 dark:border-slate-800">
@@ -174,7 +205,7 @@ export const DashboardHome: React.FC<DashboardHomeProps> = ({
                   className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap"
                 >
                   <Sparkles className="w-4 h-4" />
-                  <span>Isi Refleksi &amp; Rencana Lulus</span>
+                  <span>Isi Data Diri &amp; Profil</span>
                 </button>
               ) : (
                 <button
@@ -281,6 +312,11 @@ export const DashboardHome: React.FC<DashboardHomeProps> = ({
             </div>
           </div>
         </div>
+        <StudentInfoModal
+          student={infoStudent}
+          onClose={() => setInfoStudent(null)}
+          logsCount={studentLogs.length}
+        />
       </div>
     );
   }
@@ -535,7 +571,20 @@ export const DashboardHome: React.FC<DashboardHomeProps> = ({
                         {item.topik}
                       </p>
                       <p className="text-[11px] text-slate-600 dark:text-slate-400 mt-1">
-                        Murid: <strong>{item.student_name}</strong>
+                        Murid:{' '}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const matched = students.find(
+                              (s) => s.id === item.student_id || s.nama_lengkap === item.student_name
+                            );
+                            if (matched) setInfoStudent(matched);
+                          }}
+                          title="Klik nama untuk melihat pop-up informasi murid"
+                          className="font-bold text-slate-900 dark:text-white hover:text-blue-600 dark:hover:text-blue-400 hover:underline cursor-pointer"
+                        >
+                          {item.student_name}
+                        </button>
                       </p>
 
                       <div className="flex flex-wrap gap-1.5 mt-3 pt-2.5 border-t border-slate-100 dark:border-slate-800">
@@ -566,6 +615,13 @@ export const DashboardHome: React.FC<DashboardHomeProps> = ({
           })}
         </div>
       </div>
+      <StudentInfoModal
+        student={infoStudent}
+        onClose={() => setInfoStudent(null)}
+        logsCount={
+          infoStudent ? logs.filter((l) => l.student_id === infoStudent.id).length : undefined
+        }
+      />
     </div>
   );
 };

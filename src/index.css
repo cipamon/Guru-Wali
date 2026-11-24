@@ -7,6 +7,10 @@
     font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
   }
 
+  html[data-ui-density='compact'] {
+    font-size: 14.5px;
+  }
+
   .font-mono-tabular {
     font-family: 'JetBrains Mono', monospace;
     font-variant-numeric: tabular-nums;

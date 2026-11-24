@@ -85,14 +85,22 @@ export interface WcStudent {
   nama_panggilan: string;
   jenis_kelamin: 'L' | 'P';
   kelas: string;
+  no_absen?: string;
   nis: string;
   nisn: string;
+  tempat_lahir?: string;
+  tanggal_lahir?: string;
   ttl: string;
   whatsapp: string;
   email: string;
   alamat: string;
   agama: string;
   hobi: string;
+  status_siswa?: string;
+  guru_wali_id?: string;
+  guru_wali_nama?: string;
+  wali_kelas?: string;
+  guru_bk?: string;
   nama_ayah: string;
   pekerjaan_ayah: string;
   nama_ibu: string;
@@ -223,6 +231,38 @@ export interface WcPrintConfig extends SignatureSettings {
   ttd_landscape?: SignatureSettings;
 }
 
+export type ThemeAccentId =
+  | 'blue'
+  | 'indigo'
+  | 'emerald'
+  | 'teal'
+  | 'violet'
+  | 'rose'
+  | 'amber'
+  | 'slate';
+
+export type LoginBgPreset = 'ice_blue' | 'emerald_mint' | 'indigo_dusk' | 'warm_slate';
+
+export type UiDensity = 'comfortable' | 'compact';
+
+export interface WcAppConfig {
+  app_name: string;
+  app_subtitle: string;
+  app_logo: string;
+  school_name: string;
+  sidebar_sop_title: string;
+  sidebar_sop_desc: string;
+  allow_registration: boolean;
+  allowed_register_roles: UserRole[];
+  show_quick_login: boolean;
+  show_demo_seed: boolean;
+  default_theme_mode: 'light' | 'dark';
+  theme_accent: ThemeAccentId;
+  login_bg_preset: LoginBgPreset;
+  ui_density: UiDensity;
+  updated_at?: string;
+}
+
 export type PrintDocumentType = 'paket_lengkap' | SheetKey;
 
 export type NavTabId =
@@ -233,4 +273,6 @@ export type NavTabId =
   | 'communication'
   | 'announcements'
   | 'accounts'
-  | 'print_f4';
+  | 'print_f4'
+  | 'admin_settings';
+

@@ -32,6 +32,7 @@ import {
 import { doc, setDoc } from 'firebase/firestore';
 import { COLLECTIONS, db, DEFAULT_PRINT_CONFIG, savePrintConfig } from '../lib/firebase';
 import { calcAttendancePct, compressImageFile } from '../lib/imageUtils';
+import { SmartPhoto } from './SmartPhoto';
 import {
   EVALUASI_PERIODES,
   getSnapshotForPeriode,
@@ -671,16 +672,13 @@ export const PrintSystemView: React.FC<PrintSystemViewProps> = ({
 
           {/* 4x6 Photo Frame */}
           <div className="w-[34mm] h-[46mm] border border-slate-900 shrink-0 flex items-center justify-center overflow-hidden bg-slate-50">
-            {st.foto_url ? (
-              <img
-                src={st.foto_url}
-                alt={`Pas Foto ${st.nama_lengkap}`}
-                referrerPolicy="no-referrer"
-                className="w-full h-full object-cover"
-              />
-            ) : (
-              <span className="text-[8pt] text-center text-slate-500">Pas Foto<br />4 × 6 cm</span>
-            )}
+            <SmartPhoto
+              src={st.foto_url}
+              alt={`Pas Foto ${st.nama_lengkap}`}
+              fallback={
+                <span className="text-[8pt] text-center text-slate-500">Pas Foto<br />4 × 6 cm</span>
+              }
+            />
           </div>
         </div>
 
@@ -902,11 +900,11 @@ export const PrintSystemView: React.FC<PrintSystemViewProps> = ({
               </td>
               <td className="border border-slate-800 px-1.5 py-1.5 text-center align-top">
                 {l.foto_url ? (
-                  <img
+                  <SmartPhoto
                     src={l.foto_url}
                     alt="Doc"
-                    referrerPolicy="no-referrer"
                     className="w-16 h-12 object-cover mx-auto border border-slate-400"
+                    fallback={<span>-</span>}
                   />
                 ) : (
                   '-'
@@ -992,10 +990,9 @@ export const PrintSystemView: React.FC<PrintSystemViewProps> = ({
           <div className="grid grid-cols-3 gap-2">
             {docPhotos.slice(0, 3).map((l) => (
               <div key={l.id} className="border border-slate-700 p-1 text-center">
-                <img
+                <SmartPhoto
                   src={l.foto_url}
                   alt={l.topik}
-                  referrerPolicy="no-referrer"
                   className="w-full h-24 object-cover mb-1"
                 />
                 <p className="text-[8pt] truncate font-semibold">{l.topik}</p>

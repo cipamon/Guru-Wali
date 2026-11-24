@@ -28,7 +28,12 @@ import {
   handleFirestoreError,
   OperationType,
 } from '../lib/firebase';
-import { calcAttendancePct, compressImageFile } from '../lib/imageUtils';
+import {
+  calcAttendancePct,
+  compressImageFile,
+  isGoogleDriveUrl,
+  normalizeExternalImageUrl,
+} from '../lib/imageUtils';
 import {
   downloadStudentsXlsTemplate,
   exportStudentsToPdf,
@@ -36,12 +41,16 @@ import {
   exportStudentsToXls,
   importStudentsFromFile,
 } from '../lib/docExportImport';
-import type { BkDetail, UserRole, WcStudent } from '../types/waliconnect';
+import { SmartPhoto } from './SmartPhoto';
+import { StudentInfoModal } from './StudentInfoModal';
+import type { BkDetail, UserRole, WcStudent, WcUser } from '../types/waliconnect';
 
 interface StudentsViewProps {
   students: WcStudent[];
   role: UserRole;
   linkedStudentId?: string;
+  currentUser?: WcUser;
+  users?: WcUser[];
   searchQuery: string;
   initialSelectedId?: string;
 }
@@ -50,10 +59,14 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
   students,
   role,
   linkedStudentId,
+  currentUser,
+  users = [],
   searchQuery,
   initialSelectedId,
 }) => {
   const isStaff = role === 'Guru Wali' || role === 'Admin';
+  const isSiswa = role === 'Siswa';
+  const guruWaliUsers = users.filter((u) => u.role === 'Guru Wali' || u.role === 'Admin');
 
   const visibleStudents = isStaff
     ? students.filter((s) => {
@@ -62,16 +75,30 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
         return (
           s.nama_lengkap.toLowerCase().includes(q) ||
           s.kelas.toLowerCase().includes(q) ||
-          s.nis.toLowerCase().includes(q)
+          s.nis.toLowerCase().includes(q) ||
+          (s.nisn || '').toLowerCase().includes(q) ||
+          (s.no_absen || '').toLowerCase().includes(q) ||
+          (s.wali_kelas || '').toLowerCase().includes(q) ||
+          (s.guru_wali_nama || '').toLowerCase().includes(q) ||
+          (s.guru_bk || '').toLowerCase().includes(q) ||
+          (s.status_siswa || '').toLowerCase().includes(q)
         );
       })
-    : students.filter((s) => !linkedStudentId || s.id === linkedStudentId);
+    : students.filter((s) =>
+        linkedStudentId
+          ? s.id === linkedStudentId
+          : currentUser
+            ? s.nis.trim().toLowerCase() === currentUser.nip.trim().toLowerCase()
+            : false
+      );
 
   const [viewMode, setViewMode] = useState<'grid' | 'table'>('grid');
   const [selectedId, setSelectedId] = useState<string>(
     initialSelectedId || visibleStudents[0]?.id || ''
   );
-  const [profileSubTab, setProfileSubTab] = useState<'mandiri' | 'bk'>('mandiri');
+  const [profileSubTab, setProfileSubTab] = useState<'biodata' | 'mandiri' | 'bk'>(
+    role === 'Siswa' ? 'biodata' : 'mandiri'
+  );
 
   // Multi-select & Import/Export state
   const [checkedIds, setCheckedIds] = useState<string[]>([]);
@@ -82,14 +109,15 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
   const [transferError, setTransferError] = useState('');
   const importInputRef = useRef<HTMLInputElement | null>(null);
 
-  // Modal Lampiran A state
+  // Modal Lampiran A & Pop-up Info Siswa state
   const [modalOpen, setModalOpen] = useState(false);
   const [editingStudent, setEditingStudent] = useState<WcStudent | null>(null);
+  const [infoStudent, setInfoStudent] = useState<WcStudent | null>(null);
   const [savingModal, setSavingModal] = useState(false);
   const [aiLoading, setAiLoading] = useState(false);
   const [aiError, setAiError] = useState('');
 
-  // Inline Mandiri & BK draft state synced with selectedStudent
+  // Inline Mandiri, Biodata & BK draft state synced with selectedStudent
   const selectedStudent =
     visibleStudents.find((s) => s.id === selectedId) ?? visibleStudents[0] ?? null;
 
@@ -111,6 +139,16 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
 
   const [bkDraft, setBkDraft] = useState<BkDetail>(createEmptyBkDetail());
   const [bkSection, setBkSection] = useState<'A' | 'B' | 'C' | 'D' | 'E' | 'F'>('A');
+  const [biodataDraft, setBiodataDraft] = useState<WcStudent>(() => {
+    const empty = createEmptyStudent(`std-${Date.now()}`);
+    if (currentUser && role === 'Siswa') {
+      empty.nama_lengkap = currentUser.nama;
+      empty.nama_panggilan = currentUser.nama.split(' ')[0] || '';
+      empty.nis = currentUser.nip;
+      empty.kelas = 'Belum Diisi';
+    }
+    return empty;
+  });
   const [savingInline, setSavingInline] = useState(false);
   const [inlineToast, setInlineToast] = useState('');
 
@@ -120,6 +158,24 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
 
   useEffect(() => {
     if (selectedStudent) {
+      let tempat = selectedStudent.tempat_lahir || '';
+      let tanggal = selectedStudent.tanggal_lahir || '';
+      if (!tempat && !tanggal && selectedStudent.ttl) {
+        const idx = selectedStudent.ttl.indexOf(',');
+        if (idx >= 0) {
+          tempat = selectedStudent.ttl.slice(0, idx).trim();
+          tanggal = selectedStudent.ttl.slice(idx + 1).trim();
+        } else {
+          tempat = selectedStudent.ttl.trim();
+        }
+      }
+      setBiodataDraft({
+        ...createEmptyStudent(selectedStudent.id),
+        ...selectedStudent,
+        tempat_lahir: tempat,
+        tanggal_lahir: tanggal,
+        status_siswa: selectedStudent.status_siswa || 'Aktif',
+      });
       setMandiriDraft({
         foto_url: selectedStudent.foto_url || '',
         deskripsi_diri: selectedStudent.deskripsi_diri || '',
@@ -129,8 +185,15 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
         catatan_khusus: selectedStudent.catatan_khusus || '',
       });
       setBkDraft({ ...createEmptyBkDetail(), ...(selectedStudent.bk_detail || {}) });
+    } else if (currentUser && role === 'Siswa') {
+      const empty = createEmptyStudent(`std-${Date.now()}`);
+      empty.nama_lengkap = currentUser.nama;
+      empty.nama_panggilan = currentUser.nama.split(' ')[0] || '';
+      empty.nis = currentUser.nip;
+      empty.kelas = '';
+      setBiodataDraft(empty);
     }
-  }, [selectedStudent?.id, selectedStudent?.updated_at]);
+  }, [selectedStudent?.id, selectedStudent?.updated_at, currentUser?.id, role]);
 
   const openNewModal = () => {
     setEditingStudent(createEmptyStudent(`std-${Date.now()}`));
@@ -139,7 +202,26 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
   };
 
   const openEditModal = (st: WcStudent) => {
-    setEditingStudent({ ...st });
+    let tempat = st.tempat_lahir || '';
+    let tanggal = st.tanggal_lahir || '';
+    if (!tempat && !tanggal && st.ttl) {
+      const idx = st.ttl.indexOf(',');
+      if (idx >= 0) {
+        tempat = st.ttl.slice(0, idx).trim();
+        tanggal = st.ttl.slice(idx + 1).trim();
+      } else {
+        tempat = st.ttl.trim();
+      }
+    }
+    setEditingStudent({
+      ...st,
+      no_absen: st.no_absen || '',
+      tempat_lahir: tempat,
+      tanggal_lahir: tanggal,
+      status_siswa: st.status_siswa || 'Aktif',
+      wali_kelas: st.wali_kelas || '',
+      guru_bk: st.guru_bk || '',
+    });
     setAiError('');
     setModalOpen(true);
   };
@@ -153,8 +235,16 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
     }
     setSavingModal(true);
     try {
+      const composedTtl =
+        [editingStudent.tempat_lahir?.trim(), editingStudent.tanggal_lahir?.trim()]
+          .filter(Boolean)
+          .join(', ') || editingStudent.ttl;
+      const normalizedFoto =
+        normalizeExternalImageUrl(editingStudent.foto_url) || editingStudent.foto_url.trim();
       const payload: WcStudent = {
         ...editingStudent,
+        foto_url: normalizedFoto,
+        ttl: composedTtl,
         updated_at: new Date().toISOString(),
       };
       await setDoc(doc(db, COLLECTIONS.students, payload.id), payload);
@@ -243,7 +333,7 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
 
   const handlePhotoUpload = async (
     file: File | undefined,
-    target: 'modal' | 'mandiri'
+    target: 'modal' | 'mandiri' | 'biodata'
   ) => {
     if (!file) return;
     const compressed = await compressImageFile(file, 640, 0.78);
@@ -251,6 +341,64 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
       setEditingStudent({ ...editingStudent, foto_url: compressed });
     } else if (target === 'mandiri') {
       setMandiriDraft((prev) => ({ ...prev, foto_url: compressed }));
+    } else if (target === 'biodata') {
+      setBiodataDraft((prev) => ({ ...prev, foto_url: compressed }));
+    }
+  };
+
+  const handleSaveBiodata = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!biodataDraft.nama_lengkap.trim() || !biodataDraft.kelas.trim() || !biodataDraft.nis.trim()) {
+      setAiError('Nama Lengkap, Kelas, dan NIS wajib diisi sebelum menyimpan data diri.');
+      return;
+    }
+    setSavingInline(true);
+    setInlineToast('');
+    setAiError('');
+    try {
+      const targetId = selectedStudent?.id || biodataDraft.id || `std-${Date.now()}`;
+      const composedTtl =
+        [biodataDraft.tempat_lahir?.trim(), biodataDraft.tanggal_lahir?.trim()]
+          .filter(Boolean)
+          .join(', ') || biodataDraft.ttl;
+      const normalizedFoto =
+        normalizeExternalImageUrl(biodataDraft.foto_url) || biodataDraft.foto_url.trim();
+
+      const payload: WcStudent = {
+        ...biodataDraft,
+        id: targetId,
+        foto_url: normalizedFoto,
+        ttl: composedTtl,
+        bk_detail: {
+          ...createEmptyBkDetail(),
+          ...(biodataDraft.bk_detail || {}),
+          a1_nama_lengkap: biodataDraft.nama_lengkap,
+          a2_nama_panggilan: biodataDraft.nama_panggilan,
+          a3_ttl: composedTtl,
+          a4_agama: biodataDraft.agama,
+          a13_nama_ayah: biodataDraft.nama_ayah,
+          a14_pendidikan_pekerjaan_ayah: biodataDraft.pekerjaan_ayah,
+          a15_nama_ibu: biodataDraft.nama_ibu,
+          a16_pendidikan_pekerjaan_ibu: biodataDraft.pekerjaan_ibu,
+        },
+        updated_at: new Date().toISOString(),
+      };
+
+      await setDoc(doc(db, COLLECTIONS.students, targetId), payload);
+
+      if (currentUser && isSiswa && (currentUser.linked_student_id !== targetId || currentUser.nama !== payload.nama_lengkap)) {
+        await updateDoc(doc(db, COLLECTIONS.users, currentUser.id), {
+          linked_student_id: targetId,
+          nama: payload.nama_lengkap,
+        });
+      }
+
+      setSelectedId(targetId);
+      setInlineToast('Data diri profil Anda berhasil disimpan ke database.');
+    } catch (err) {
+      handleFirestoreError(err, OperationType.WRITE, COLLECTIONS.students);
+    } finally {
+      setSavingInline(false);
     }
   };
 
@@ -302,8 +450,10 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
     setSavingInline(true);
     setInlineToast('');
     try {
+      const normalizedFoto =
+        normalizeExternalImageUrl(mandiriDraft.foto_url) || mandiriDraft.foto_url.trim();
       await updateDoc(doc(db, COLLECTIONS.students, selectedStudent.id), {
-        foto_url: mandiriDraft.foto_url,
+        foto_url: normalizedFoto,
         deskripsi_diri: mandiriDraft.deskripsi_diri,
         rencana_lulus: mandiriDraft.rencana_lulus,
         prodi_pilihan: mandiriDraft.prodi_pilihan,
@@ -562,18 +712,113 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
         )}
       </div>
 
-      {/* Student List: Grid vs Detail Table */}
-      {visibleStudents.length === 0 ? (
+      {/* Student List: Grid vs Detail Table (Staff) OR Empty Student Self-Profile Creator */}
+      {!isStaff && visibleStudents.length === 0 ? (
+        <form
+          onSubmit={handleSaveBiodata}
+          className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 space-y-5"
+        >
+          <div>
+            <p className="text-xs font-bold text-blue-600 dark:text-blue-400">
+              Profil Data Diri Siswa Baru
+            </p>
+            <h3 className="text-lg font-extrabold text-slate-900 dark:text-white mt-0.5">
+              Lengkapi Data Diri Profil Anda
+            </h3>
+            <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+              Akun Anda belum terhubung ke kartu murid. Silakan isi data diri dasar berikut untuk membuat profil resmi Anda.
+            </p>
+          </div>
+
+          {aiError && (
+            <div className="px-4 py-2.5 rounded-xl bg-rose-50 dark:bg-rose-950/60 border border-rose-200 dark:border-rose-800 text-xs font-medium text-rose-700 dark:text-rose-300">
+              {aiError}
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
+            <div>
+              <label className="block text-xs font-semibold mb-1">NIS *</label>
+              <input
+                required
+                type="text"
+                value={biodataDraft.nis}
+                onChange={(e) => setBiodataDraft({ ...biodataDraft, nis: e.target.value })}
+                className="w-full px-3 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold mb-1">Nama Lengkap *</label>
+              <input
+                required
+                type="text"
+                value={biodataDraft.nama_lengkap}
+                onChange={(e) => setBiodataDraft({ ...biodataDraft, nama_lengkap: e.target.value })}
+                className="w-full px-3 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold mb-1">Kelas *</label>
+              <input
+                required
+                type="text"
+                placeholder="Contoh: XI MIPA 1"
+                value={biodataDraft.kelas}
+                onChange={(e) => setBiodataDraft({ ...biodataDraft, kelas: e.target.value })}
+                className="w-full px-3 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold mb-1">NISN</label>
+              <input
+                type="text"
+                value={biodataDraft.nisn}
+                onChange={(e) => setBiodataDraft({ ...biodataDraft, nisn: e.target.value })}
+                className="w-full px-3 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold mb-1">No. Absen</label>
+              <input
+                type="text"
+                value={biodataDraft.no_absen || ''}
+                onChange={(e) => setBiodataDraft({ ...biodataDraft, no_absen: e.target.value })}
+                className="w-full px-3 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold mb-1">NO_HP / WhatsApp</label>
+              <input
+                type="text"
+                value={biodataDraft.whatsapp}
+                onChange={(e) => setBiodataDraft({ ...biodataDraft, whatsapp: e.target.value })}
+                className="w-full px-3 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
+              />
+            </div>
+          </div>
+
+          <div className="flex justify-end">
+            <button
+              type="submit"
+              disabled={savingInline}
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold cursor-pointer disabled:opacity-60"
+            >
+              {savingInline ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+              <span>Buat &amp; Simpan Profil Saya</span>
+            </button>
+          </div>
+        </form>
+      ) : visibleStudents.length === 0 ? (
         <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-10 text-center">
           <UserCircle2 className="w-10 h-10 text-slate-300 dark:text-slate-600 mx-auto mb-3" />
           <p className="text-sm font-bold text-slate-800 dark:text-slate-200">
             Belum Ada Data Murid Dampingan
           </p>
           <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-            Tambahkan profil murid manual, impor dari template Excel/Word, atau muat data demo.
+            Tambahkan profil murid manual, impor dari template Excel/Word, atau tetapkan siswa perwalian di menu Tautan Akun Wali.
           </p>
         </div>
-      ) : viewMode === 'grid' ? (
+      ) : !isStaff ? null : viewMode === 'grid' ? (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
           {visibleStudents.map((st) => {
             const active = selectedStudent?.id === st.id;
@@ -607,26 +852,47 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
                       )}
                     </button>
                   )}
-                  <div className="w-16 h-20 rounded-xl overflow-hidden bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shrink-0 flex items-center justify-center">
-                    {st.foto_url ? (
-                      <img
-                        src={st.foto_url}
-                        alt={st.nama_lengkap}
-                        referrerPolicy="no-referrer"
-                        className="w-full h-full object-cover"
-                      />
-                    ) : (
-                      <span className="text-sm font-bold text-slate-400">4×6</span>
-                    )}
-                  </div>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setInfoStudent(st);
+                    }}
+                    title="Klik untuk melihat pop-up informasi murid"
+                    className="w-16 h-20 rounded-xl overflow-hidden bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shrink-0 flex items-center justify-center cursor-pointer hover:ring-2 hover:ring-blue-500/50 transition-all"
+                  >
+                    <SmartPhoto
+                      src={st.foto_url}
+                      alt={st.nama_lengkap}
+                      fallback={<span className="text-sm font-bold text-slate-400">4×6</span>}
+                    />
+                  </button>
                   <div className="flex-1 min-w-0">
-                    <h3 className="text-sm font-bold text-slate-900 dark:text-white truncate">
-                      {st.nama_lengkap}
-                    </h3>
-                    <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                      {st.kelas} · NIS <span className="font-mono-tabular">{st.nis}</span>
+                    <div className="flex items-center justify-between gap-2">
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setInfoStudent(st);
+                        }}
+                        title="Klik nama untuk melihat pop-up informasi murid"
+                        className="text-left text-sm font-bold text-slate-900 dark:text-white hover:text-blue-600 dark:hover:text-blue-400 hover:underline truncate cursor-pointer"
+                      >
+                        {st.nama_lengkap}
+                      </button>
+                      <span className="px-2 py-0.5 rounded-md bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 text-[10px] font-semibold shrink-0">
+                        {st.status_siswa || 'Aktif'}
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5 truncate">
+                      {st.kelas}
+                      {st.no_absen ? ` · Absen ${st.no_absen}` : ''} · NIS{' '}
+                      <span className="font-mono-tabular">{st.nis}</span>
                     </p>
-                    <p className="text-xs text-slate-600 dark:text-slate-300 mt-2">
+                    <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1 truncate">
+                      Wali: {st.wali_kelas || '-'} · BK: {st.guru_bk || '-'}
+                    </p>
+                    <p className="text-xs text-slate-600 dark:text-slate-300 mt-1.5">
                       Rencana: <strong>{st.rencana_lulus || '-'}</strong> · Hadir{' '}
                       <span className="font-mono-tabular font-bold text-blue-600 dark:text-blue-400">
                         {pct}%
@@ -637,7 +903,7 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
 
                 <div className="flex items-center justify-between mt-4 pt-3 border-t border-slate-100 dark:border-slate-800">
                   <span className="text-[11px] text-slate-500 dark:text-slate-400 truncate max-w-[65%]">
-                    {st.prodi_pilihan || 'Program studi belum ditentukan'}
+                    {st.whatsapp ? `HP: ${st.whatsapp}` : st.prodi_pilihan || 'Program studi belum ditentukan'}
                   </span>
                   <div className="flex items-center gap-1.5">
                     <button
@@ -692,18 +958,24 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
                       </button>
                     </th>
                   )}
-                  <th className="py-3 px-4 font-bold">Nama Murid</th>
-                  <th className="py-3 px-4 font-bold">Kelas</th>
-                  <th className="py-3 px-4 font-bold">NIS / NISN</th>
-                  <th className="py-3 px-4 font-bold">Rencana Lulus</th>
-                  <th className="py-3 px-4 font-bold">Kontak Wali</th>
-                  <th className="py-3 px-4 font-bold text-right">Hadir</th>
-                  <th className="py-3 px-4 font-bold text-right">Aksi</th>
+                  <th className="py-3 px-3 font-bold">Absen</th>
+                  <th className="py-3 px-3 font-bold">NIS / NISN</th>
+                  <th className="py-3 px-3 font-bold">Nama (L/P)</th>
+                  <th className="py-3 px-3 font-bold">Kelas</th>
+                  <th className="py-3 px-3 font-bold">Tempat, Tgl Lahir</th>
+                  <th className="py-3 px-3 font-bold">NO_HP / Email</th>
+                  <th className="py-3 px-3 font-bold">Alamat</th>
+                  <th className="py-3 px-3 font-bold">Status</th>
+                  <th className="py-3 px-3 font-bold">Wali Kelas / Guru BK</th>
+                  <th className="py-3 px-3 font-bold text-right">Hadir</th>
+                  <th className="py-3 px-3 font-bold text-right">Aksi</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                {visibleStudents.map((st) => {
+                {visibleStudents.map((st, idx) => {
                   const isChecked = checkedIds.includes(st.id);
+                  const ttlDisplay =
+                    [st.tempat_lahir, st.tanggal_lahir].filter(Boolean).join(', ') || st.ttl || '-';
                   return (
                     <tr
                       key={st.id}
@@ -729,23 +1001,70 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
                           )}
                         </td>
                       )}
-                      <td className="py-3 px-4 font-semibold text-slate-900 dark:text-white">
-                        {st.nama_lengkap}
+                      <td className="py-3 px-3 font-mono-tabular text-slate-600 dark:text-slate-300">
+                        {st.no_absen || idx + 1}
                       </td>
-                      <td className="py-3 px-4 text-slate-600 dark:text-slate-300">{st.kelas}</td>
-                      <td className="py-3 px-4 font-mono-tabular text-slate-600 dark:text-slate-300">
-                        {st.nis} / {st.nisn || '-'}
+                      <td className="py-3 px-3 font-mono-tabular text-slate-600 dark:text-slate-300">
+                        <div>{st.nis}</div>
+                        <div className="text-[11px] text-slate-400">{st.nisn || '-'}</div>
                       </td>
-                      <td className="py-3 px-4 text-slate-700 dark:text-slate-200">
-                        {st.rencana_lulus || '-'} · {st.prodi_pilihan || '-'}
+                      <td className="py-3 px-3 font-semibold text-slate-900 dark:text-white">
+                        <div className="flex items-center gap-2.5">
+                          <div className="w-8 h-10 rounded-md overflow-hidden bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shrink-0 flex items-center justify-center">
+                            <SmartPhoto
+                              src={st.foto_url}
+                              alt={st.nama_lengkap}
+                              fallback={
+                                <span className="text-[10px] font-bold text-slate-400">
+                                  {st.nama_lengkap.slice(0, 2).toUpperCase()}
+                                </span>
+                              }
+                            />
+                          </div>
+                          <div>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setInfoStudent(st);
+                              }}
+                              title="Klik nama untuk melihat pop-up informasi murid"
+                              className="text-left font-bold text-slate-900 dark:text-white hover:text-blue-600 dark:hover:text-blue-400 hover:underline cursor-pointer"
+                            >
+                              {st.nama_lengkap}
+                            </button>
+                            <div className="text-[11px] font-normal text-slate-500">
+                              {st.jenis_kelamin === 'P' ? 'Perempuan (P)' : 'Laki-laki (L)'}
+                            </div>
+                          </div>
+                        </div>
                       </td>
-                      <td className="py-3 px-4 font-mono-tabular text-slate-600 dark:text-slate-300">
-                        {st.kontak_ortu || '-'}
+                      <td className="py-3 px-3 text-slate-600 dark:text-slate-300">{st.kelas}</td>
+                      <td className="py-3 px-3 text-slate-600 dark:text-slate-300">{ttlDisplay}</td>
+                      <td className="py-3 px-3 text-slate-600 dark:text-slate-300">
+                        <div className="font-mono-tabular">{st.whatsapp || '-'}</div>
+                        <div className="text-[11px] text-slate-400 truncate max-w-[160px]">
+                          {st.email || '-'}
+                        </div>
                       </td>
-                      <td className="py-3 px-4 text-right font-mono-tabular font-bold text-blue-600 dark:text-blue-400">
+                      <td className="py-3 px-3 text-slate-600 dark:text-slate-300 max-w-[180px] truncate">
+                        {st.alamat || '-'}
+                      </td>
+                      <td className="py-3 px-3">
+                        <span className="px-2 py-0.5 rounded-md bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 text-[11px] font-semibold">
+                          {st.status_siswa || 'Aktif'}
+                        </span>
+                      </td>
+                      <td className="py-3 px-3 text-slate-600 dark:text-slate-300">
+                        <div className="truncate max-w-[150px]">{st.wali_kelas || '-'}</div>
+                        <div className="text-[11px] text-slate-400 truncate max-w-[150px]">
+                          BK: {st.guru_bk || '-'}
+                        </div>
+                      </td>
+                      <td className="py-3 px-3 text-right font-mono-tabular font-bold text-blue-600 dark:text-blue-400">
                         {calcAttendancePct(st.kehadiran)}%
                       </td>
-                      <td className="py-3 px-4 text-right whitespace-nowrap space-x-2">
+                      <td className="py-3 px-3 text-right whitespace-nowrap space-x-2">
                         <button
                           type="button"
                           onClick={(e) => {
@@ -786,13 +1105,29 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
               <p className="text-xs font-semibold text-blue-600 dark:text-blue-400">
                 Profil Terpilih · {selectedStudent.kelas}
               </p>
-              <h3 className="text-lg font-bold text-slate-900 dark:text-white">
+              <button
+                type="button"
+                onClick={() => setInfoStudent(selectedStudent)}
+                title="Klik nama untuk melihat pop-up informasi murid"
+                className="text-left text-lg font-bold text-slate-900 dark:text-white hover:text-blue-600 dark:hover:text-blue-400 hover:underline cursor-pointer"
+              >
                 {selectedStudent.nama_lengkap}
-              </h3>
+              </button>
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
-              <div className="flex items-center gap-1 p-1 rounded-xl bg-slate-100 dark:bg-slate-800">
+              <div className="flex flex-wrap items-center gap-1 p-1 rounded-xl bg-slate-100 dark:bg-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setProfileSubTab('biodata')}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold cursor-pointer whitespace-nowrap ${
+                    profileSubTab === 'biodata'
+                      ? 'bg-white dark:bg-slate-900 text-blue-600 dark:text-blue-400 shadow-xs'
+                      : 'text-slate-600 dark:text-slate-400'
+                  }`}
+                >
+                  Data Diri &amp; Orang Tua (Lampiran A)
+                </button>
                 <button
                   type="button"
                   onClick={() => setProfileSubTab('mandiri')}
@@ -802,7 +1137,7 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
                       : 'text-slate-600 dark:text-slate-400'
                   }`}
                 >
-                  Panel Isian Mandiri (Lampiran A)
+                  Refleksi &amp; Rencana Lulus
                 </button>
                 <button
                   type="button"
@@ -816,14 +1151,16 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
                   Formulir Detail BK (Bagian A–F)
                 </button>
               </div>
-              <button
-                type="button"
-                onClick={() => openEditModal(selectedStudent)}
-                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 cursor-pointer whitespace-nowrap"
-              >
-                <FileText className="w-3.5 h-3.5" />
-                <span>Biodata Lampiran A</span>
-              </button>
+              {isStaff && (
+                <button
+                  type="button"
+                  onClick={() => openEditModal(selectedStudent)}
+                  className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 cursor-pointer whitespace-nowrap"
+                >
+                  <FileText className="w-3.5 h-3.5" />
+                  <span>Edit Modal Lengkap</span>
+                </button>
+              )}
             </div>
           </div>
 
@@ -838,7 +1175,344 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
             </div>
           )}
 
-          {profileSubTab === 'mandiri' ? (
+          {profileSubTab === 'biodata' ? (
+            <form onSubmit={handleSaveBiodata} className="space-y-5">
+              {/* Photo + Google Drive URL */}
+              <div className="flex flex-col sm:flex-row items-start gap-4 p-4 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700">
+                <div className="w-24 h-32 rounded-xl overflow-hidden bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 shrink-0 flex items-center justify-center">
+                  <SmartPhoto
+                    src={biodataDraft.foto_url}
+                    alt={`Pas Foto ${biodataDraft.nama_lengkap}`}
+                    showDriveHint
+                    fallback={<span className="text-xs text-slate-400">4 × 6</span>}
+                  />
+                </div>
+                <div className="flex-1 space-y-2.5 w-full">
+                  <label className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600 text-white text-xs font-semibold cursor-pointer hover:bg-blue-700">
+                    <Upload className="w-3.5 h-3.5" />
+                    <span>Unggah Pas Foto 4×6</span>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={(e) => handlePhotoUpload(e.target.files?.[0], 'biodata')}
+                    />
+                  </label>
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-600 dark:text-slate-300 mb-1">
+                      Atau Tempel URL Pas Foto / Link Google Drive
+                    </label>
+                    <input
+                      type="text"
+                      value={biodataDraft.foto_url}
+                      onChange={(e) =>
+                        setBiodataDraft({ ...biodataDraft, foto_url: e.target.value })
+                      }
+                      placeholder="https://drive.google.com/file/d/.../view atau URL gambar langsung"
+                      className="w-full px-3 py-1.5 rounded-lg text-xs bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Identitas Diri */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
+                <div>
+                  <label className="block text-xs font-semibold mb-1">NIS *</label>
+                  <input
+                    required
+                    type="text"
+                    value={biodataDraft.nis}
+                    onChange={(e) => setBiodataDraft({ ...biodataDraft, nis: e.target.value })}
+                    className="w-full px-3 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold mb-1">NISN</label>
+                  <input
+                    type="text"
+                    value={biodataDraft.nisn}
+                    onChange={(e) => setBiodataDraft({ ...biodataDraft, nisn: e.target.value })}
+                    className="w-full px-3 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold mb-1">Nama Lengkap *</label>
+                  <input
+                    required
+                    type="text"
+                    value={biodataDraft.nama_lengkap}
+                    onChange={(e) =>
+                      setBiodataDraft({ ...biodataDraft, nama_lengkap: e.target.value })
+                    }
+                    className="w-full px-3 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold mb-1">Kelas *</label>
+                  <input
+                    required
+                    type="text"
+                    value={biodataDraft.kelas}
+                    onChange={(e) => setBiodataDraft({ ...biodataDraft, kelas: e.target.value })}
+                    className="w-full px-3 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold mb-1">No. Absen</label>
+                  <input
+                    type="text"
+                    value={biodataDraft.no_absen || ''}
+                    onChange={(e) =>
+                      setBiodataDraft({ ...biodataDraft, no_absen: e.target.value })
+                    }
+                    className="w-full px-3 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold mb-1">Jenis Kelamin</label>
+                  <select
+                    value={biodataDraft.jenis_kelamin}
+                    onChange={(e) =>
+                      setBiodataDraft({
+                        ...biodataDraft,
+                        jenis_kelamin: e.target.value as 'L' | 'P',
+                      })
+                    }
+                    className="w-full px-3 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
+                  >
+                    <option value="L">Laki-Laki (L)</option>
+                    <option value="P">Perempuan (P)</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold mb-1">Tempat Lahir</label>
+                  <input
+                    type="text"
+                    value={biodataDraft.tempat_lahir || ''}
+                    onChange={(e) =>
+                      setBiodataDraft({ ...biodataDraft, tempat_lahir: e.target.value })
+                    }
+                    className="w-full px-3 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold mb-1">Tanggal Lahir</label>
+                  <input
+                    type="text"
+                    placeholder="Contoh: 14 Mei 2008"
+                    value={biodataDraft.tanggal_lahir || ''}
+                    onChange={(e) =>
+                      setBiodataDraft({ ...biodataDraft, tanggal_lahir: e.target.value })
+                    }
+                    className="w-full px-3 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold mb-1">Nama Panggilan</label>
+                  <input
+                    type="text"
+                    value={biodataDraft.nama_panggilan}
+                    onChange={(e) =>
+                      setBiodataDraft({ ...biodataDraft, nama_panggilan: e.target.value })
+                    }
+                    className="w-full px-3 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold mb-1">NO_HP / WhatsApp</label>
+                  <input
+                    type="text"
+                    value={biodataDraft.whatsapp}
+                    onChange={(e) =>
+                      setBiodataDraft({ ...biodataDraft, whatsapp: e.target.value })
+                    }
+                    className="w-full px-3 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold mb-1">Email</label>
+                  <input
+                    type="email"
+                    value={biodataDraft.email}
+                    onChange={(e) => setBiodataDraft({ ...biodataDraft, email: e.target.value })}
+                    className="w-full px-3 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold mb-1">Agama</label>
+                  <input
+                    type="text"
+                    value={biodataDraft.agama}
+                    onChange={(e) => setBiodataDraft({ ...biodataDraft, agama: e.target.value })}
+                    className="w-full px-3 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
+                  />
+                </div>
+                <div className="sm:col-span-2">
+                  <label className="block text-xs font-semibold mb-1">Alamat Domisili</label>
+                  <input
+                    type="text"
+                    value={biodataDraft.alamat}
+                    onChange={(e) => setBiodataDraft({ ...biodataDraft, alamat: e.target.value })}
+                    className="w-full px-3 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold mb-1">Hobi &amp; Minat</label>
+                  <input
+                    type="text"
+                    value={biodataDraft.hobi}
+                    onChange={(e) => setBiodataDraft({ ...biodataDraft, hobi: e.target.value })}
+                    className="w-full px-3 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold mb-1">Guru Wali Pendamping</label>
+                  {isStaff || guruWaliUsers.length > 0 ? (
+                    <select
+                      disabled={!isStaff && Boolean(selectedStudent.guru_wali_id)}
+                      value={biodataDraft.guru_wali_id || ''}
+                      onChange={(e) => {
+                        const chosen = guruWaliUsers.find((g) => g.id === e.target.value);
+                        setBiodataDraft({
+                          ...biodataDraft,
+                          guru_wali_id: chosen ? chosen.id : '',
+                          guru_wali_nama: chosen ? chosen.nama : '',
+                        });
+                      }}
+                      className="w-full px-3 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 disabled:opacity-75"
+                    >
+                      <option value="">-- Pilih Guru Wali --</option>
+                      {guruWaliUsers.map((g) => (
+                        <option key={g.id} value={g.id}>
+                          {g.nama} ({g.role})
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <input
+                      type="text"
+                      readOnly
+                      value={biodataDraft.guru_wali_nama || 'Menunggu penetapan Admin'}
+                      className="w-full px-3 py-2 rounded-xl text-xs bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
+                    />
+                  )}
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold mb-1">Wali Kelas</label>
+                  <input
+                    type="text"
+                    value={biodataDraft.wali_kelas || ''}
+                    onChange={(e) =>
+                      setBiodataDraft({ ...biodataDraft, wali_kelas: e.target.value })
+                    }
+                    className="w-full px-3 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold mb-1">Guru BK</label>
+                  <input
+                    type="text"
+                    value={biodataDraft.guru_bk || ''}
+                    onChange={(e) =>
+                      setBiodataDraft({ ...biodataDraft, guru_bk: e.target.value })
+                    }
+                    className="w-full px-3 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
+                  />
+                </div>
+              </div>
+
+              {/* Data Orang Tua / Wali */}
+              <div className="pt-3 border-t border-slate-200 dark:border-slate-800 space-y-3">
+                <p className="text-xs font-bold text-slate-800 dark:text-slate-200">
+                  Data Orang Tua / Wali
+                </p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                  <div>
+                    <label className="block text-xs font-semibold mb-1">Nama Ayah</label>
+                    <input
+                      type="text"
+                      value={biodataDraft.nama_ayah}
+                      onChange={(e) =>
+                        setBiodataDraft({ ...biodataDraft, nama_ayah: e.target.value })
+                      }
+                      className="w-full px-3 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold mb-1">Pekerjaan Ayah</label>
+                    <input
+                      type="text"
+                      value={biodataDraft.pekerjaan_ayah}
+                      onChange={(e) =>
+                        setBiodataDraft({ ...biodataDraft, pekerjaan_ayah: e.target.value })
+                      }
+                      className="w-full px-3 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold mb-1">Nama Ibu</label>
+                    <input
+                      type="text"
+                      value={biodataDraft.nama_ibu}
+                      onChange={(e) =>
+                        setBiodataDraft({ ...biodataDraft, nama_ibu: e.target.value })
+                      }
+                      className="w-full px-3 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold mb-1">Pekerjaan Ibu</label>
+                    <input
+                      type="text"
+                      value={biodataDraft.pekerjaan_ibu}
+                      onChange={(e) =>
+                        setBiodataDraft({ ...biodataDraft, pekerjaan_ibu: e.target.value })
+                      }
+                      className="w-full px-3 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold mb-1">Alamat Orang Tua</label>
+                    <input
+                      type="text"
+                      value={biodataDraft.alamat_ortu}
+                      onChange={(e) =>
+                        setBiodataDraft({ ...biodataDraft, alamat_ortu: e.target.value })
+                      }
+                      className="w-full px-3 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold mb-1">Kontak Orang Tua</label>
+                    <input
+                      type="text"
+                      value={biodataDraft.kontak_ortu}
+                      onChange={(e) =>
+                        setBiodataDraft({ ...biodataDraft, kontak_ortu: e.target.value })
+                      }
+                      className="w-full px-3 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex justify-end">
+                <button
+                  type="submit"
+                  disabled={savingInline}
+                  className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold cursor-pointer disabled:opacity-60"
+                >
+                  {savingInline ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <Save className="w-3.5 h-3.5" />
+                  )}
+                  <span>Simpan Data Diri Profil</span>
+                </button>
+              </div>
+            </form>
+          ) : profileSubTab === 'mandiri' ? (
             <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
               {/* 4x6 Photo Column */}
               <div className="space-y-3">
@@ -846,16 +1520,12 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
                   Pas Foto Formal 4 × 6
                 </p>
                 <div className="w-36 h-48 rounded-xl overflow-hidden bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 flex items-center justify-center">
-                  {mandiriDraft.foto_url ? (
-                    <img
-                      src={mandiriDraft.foto_url}
-                      alt="Pas Foto 4x6"
-                      referrerPolicy="no-referrer"
-                      className="w-full h-full object-cover"
-                    />
-                  ) : (
-                    <span className="text-xs text-slate-400">Belum ada foto 4×6</span>
-                  )}
+                  <SmartPhoto
+                    src={mandiriDraft.foto_url}
+                    alt="Pas Foto 4x6"
+                    showDriveHint
+                    fallback={<span className="text-xs text-slate-400">Belum ada foto 4×6</span>}
+                  />
                 </div>
                 <label className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-200 cursor-pointer">
                   <Upload className="w-3.5 h-3.5" />
@@ -1146,16 +1816,12 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
               {/* Photo Upload + Link */}
               <div className="flex flex-col sm:flex-row items-start gap-4 p-4 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700">
                 <div className="w-24 h-32 rounded-xl overflow-hidden bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 shrink-0 flex items-center justify-center">
-                  {editingStudent.foto_url ? (
-                    <img
-                      src={editingStudent.foto_url}
-                      alt="Pas Foto"
-                      referrerPolicy="no-referrer"
-                      className="w-full h-full object-cover"
-                    />
-                  ) : (
-                    <span className="text-xs text-slate-400">4 × 6</span>
-                  )}
+                  <SmartPhoto
+                    src={editingStudent.foto_url}
+                    alt="Pas Foto"
+                    showDriveHint
+                    fallback={<span className="text-xs text-slate-400">4 × 6</span>}
+                  />
                 </div>
                 <div className="flex-1 space-y-2.5 w-full">
                   <label className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600 text-white text-xs font-semibold cursor-pointer hover:bg-blue-700">
@@ -1170,7 +1836,7 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
                   </label>
                   <div>
                     <label className="block text-[11px] font-semibold text-slate-600 dark:text-slate-300 mb-1">
-                      Atau Tempel URL Pas Foto
+                      Atau Tempel URL Pas Foto / Link Google Drive
                     </label>
                     <input
                       type="text"
@@ -1178,67 +1844,20 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
                       onChange={(e) =>
                         setEditingStudent({ ...editingStudent, foto_url: e.target.value })
                       }
-                      placeholder="https://... atau path aset"
+                      placeholder="https://drive.google.com/file/d/.../view atau URL gambar langsung"
                       className="w-full px-3 py-1.5 rounded-lg text-xs bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white"
                     />
+                    <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-1">
+                      {isGoogleDriveUrl(editingStudent.foto_url)
+                        ? 'Link Google Drive terdeteksi otomatis. Pastikan izin file di Drive diset "Siapa saja yang memiliki link".'
+                        : 'Mendukung tautan Google Drive (file/d/.../view, open?id=...) maupun URL gambar langsung.'}
+                    </p>
                   </div>
                 </div>
               </div>
 
-              {/* Identity Grid */}
+              {/* Identity Grid — 15 Informasi Awal Siswa + Lampiran A */}
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
-                <div>
-                  <label className="block text-xs font-semibold mb-1">Nama Lengkap *</label>
-                  <input
-                    required
-                    type="text"
-                    value={editingStudent.nama_lengkap}
-                    onChange={(e) =>
-                      setEditingStudent({ ...editingStudent, nama_lengkap: e.target.value })
-                    }
-                    className="w-full px-3 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold mb-1">Nama Panggilan</label>
-                  <input
-                    type="text"
-                    value={editingStudent.nama_panggilan}
-                    onChange={(e) =>
-                      setEditingStudent({ ...editingStudent, nama_panggilan: e.target.value })
-                    }
-                    className="w-full px-3 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold mb-1">Jenis Kelamin</label>
-                  <select
-                    value={editingStudent.jenis_kelamin}
-                    onChange={(e) =>
-                      setEditingStudent({
-                        ...editingStudent,
-                        jenis_kelamin: e.target.value as 'L' | 'P',
-                      })
-                    }
-                    className="w-full px-3 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
-                  >
-                    <option value="L">Laki-Laki (L)</option>
-                    <option value="P">Perempuan (P)</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold mb-1">Kelas *</label>
-                  <input
-                    required
-                    type="text"
-                    value={editingStudent.kelas}
-                    onChange={(e) =>
-                      setEditingStudent({ ...editingStudent, kelas: e.target.value })
-                    }
-                    className="w-full px-3 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
-                  />
-                </div>
                 <div>
                   <label className="block text-xs font-semibold mb-1">NIS *</label>
                   <input
@@ -1262,20 +1881,116 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
                     className="w-full px-3 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
                   />
                 </div>
+                <div>
+                  <label className="block text-xs font-semibold mb-1">Nama Lengkap *</label>
+                  <input
+                    required
+                    type="text"
+                    value={editingStudent.nama_lengkap}
+                    onChange={(e) =>
+                      setEditingStudent({ ...editingStudent, nama_lengkap: e.target.value })
+                    }
+                    className="w-full px-3 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
+                  />
+                </div>
 
                 <div>
-                  <label className="block text-xs font-semibold mb-1">Tempat, Tanggal Lahir</label>
+                  <label className="block text-xs font-semibold mb-1">Kelas *</label>
                   <input
+                    required
                     type="text"
-                    value={editingStudent.ttl}
+                    value={editingStudent.kelas}
                     onChange={(e) =>
-                      setEditingStudent({ ...editingStudent, ttl: e.target.value })
+                      setEditingStudent({ ...editingStudent, kelas: e.target.value })
                     }
                     className="w-full px-3 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-semibold mb-1">No. WhatsApp</label>
+                  <label className="block text-xs font-semibold mb-1">No Absen</label>
+                  <input
+                    type="text"
+                    value={editingStudent.no_absen || ''}
+                    onChange={(e) =>
+                      setEditingStudent({ ...editingStudent, no_absen: e.target.value })
+                    }
+                    placeholder="Contoh: 05"
+                    className="w-full px-3 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold mb-1">JENIS_KELAMIN</label>
+                  <select
+                    value={editingStudent.jenis_kelamin}
+                    onChange={(e) =>
+                      setEditingStudent({
+                        ...editingStudent,
+                        jenis_kelamin: e.target.value as 'L' | 'P',
+                      })
+                    }
+                    className="w-full px-3 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
+                  >
+                    <option value="L">L (Laki-Laki)</option>
+                    <option value="P">P (Perempuan)</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold mb-1">Tempat Lahir</label>
+                  <input
+                    type="text"
+                    value={editingStudent.tempat_lahir || ''}
+                    onChange={(e) => {
+                      const tempat = e.target.value;
+                      setEditingStudent({
+                        ...editingStudent,
+                        tempat_lahir: tempat,
+                        ttl: [tempat.trim(), editingStudent.tanggal_lahir?.trim()]
+                          .filter(Boolean)
+                          .join(', '),
+                      });
+                    }}
+                    placeholder="Contoh: Jakarta"
+                    className="w-full px-3 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold mb-1">Tanggal Lahir</label>
+                  <input
+                    type="text"
+                    value={editingStudent.tanggal_lahir || ''}
+                    onChange={(e) => {
+                      const tgl = e.target.value;
+                      setEditingStudent({
+                        ...editingStudent,
+                        tanggal_lahir: tgl,
+                        ttl: [editingStudent.tempat_lahir?.trim(), tgl.trim()]
+                          .filter(Boolean)
+                          .join(', '),
+                      });
+                    }}
+                    placeholder="Contoh: 14 Mei 2008"
+                    className="w-full px-3 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold mb-1">Status</label>
+                  <select
+                    value={editingStudent.status_siswa || 'Aktif'}
+                    onChange={(e) =>
+                      setEditingStudent({ ...editingStudent, status_siswa: e.target.value })
+                    }
+                    className="w-full px-3 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
+                  >
+                    <option value="Aktif">Aktif</option>
+                    <option value="Pindah">Pindah</option>
+                    <option value="Lulus">Lulus</option>
+                    <option value="Cuti">Cuti</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold mb-1">NO_HP / WhatsApp</label>
                   <input
                     type="text"
                     value={editingStudent.whatsapp}
@@ -1286,7 +2001,7 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-semibold mb-1">Email Aktif</label>
+                  <label className="block text-xs font-semibold mb-1">Email</label>
                   <input
                     type="email"
                     value={editingStudent.email}
@@ -1296,7 +2011,76 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
                     className="w-full px-3 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
                   />
                 </div>
+                <div>
+                  <label className="block text-xs font-semibold mb-1">Nama Panggilan</label>
+                  <input
+                    type="text"
+                    value={editingStudent.nama_panggilan}
+                    onChange={(e) =>
+                      setEditingStudent({ ...editingStudent, nama_panggilan: e.target.value })
+                    }
+                    className="w-full px-3 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
+                  />
+                </div>
 
+                <div className="sm:col-span-3">
+                  <label className="block text-xs font-semibold mb-1">ALAMAT</label>
+                  <input
+                    type="text"
+                    value={editingStudent.alamat}
+                    onChange={(e) =>
+                      setEditingStudent({ ...editingStudent, alamat: e.target.value })
+                    }
+                    className="w-full px-3 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold mb-1">Guru Wali Pendamping</label>
+                  <select
+                    value={editingStudent.guru_wali_id || ''}
+                    onChange={(e) => {
+                      const chosen = guruWaliUsers.find((g) => g.id === e.target.value);
+                      setEditingStudent({
+                        ...editingStudent,
+                        guru_wali_id: chosen ? chosen.id : '',
+                        guru_wali_nama: chosen ? chosen.nama : '',
+                      });
+                    }}
+                    className="w-full px-3 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
+                  >
+                    <option value="">-- Belum Dipilih --</option>
+                    {guruWaliUsers.map((g) => (
+                      <option key={g.id} value={g.id}>
+                        {g.nama} ({g.role})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold mb-1">Wali Kelas</label>
+                  <input
+                    type="text"
+                    value={editingStudent.wali_kelas || ''}
+                    onChange={(e) =>
+                      setEditingStudent({ ...editingStudent, wali_kelas: e.target.value })
+                    }
+                    placeholder="Nama Wali Kelas"
+                    className="w-full px-3 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold mb-1">Guru BK</label>
+                  <input
+                    type="text"
+                    value={editingStudent.guru_bk || ''}
+                    onChange={(e) =>
+                      setEditingStudent({ ...editingStudent, guru_bk: e.target.value })
+                    }
+                    placeholder="Nama Guru BK"
+                    className="w-full px-3 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
+                  />
+                </div>
                 <div>
                   <label className="block text-xs font-semibold mb-1">Agama</label>
                   <input
@@ -1308,24 +2092,14 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
                     className="w-full px-3 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
                   />
                 </div>
-                <div className="sm:col-span-2">
+
+                <div className="sm:col-span-3">
                   <label className="block text-xs font-semibold mb-1">Hobi &amp; Minat</label>
                   <input
                     type="text"
                     value={editingStudent.hobi}
                     onChange={(e) =>
                       setEditingStudent({ ...editingStudent, hobi: e.target.value })
-                    }
-                    className="w-full px-3 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
-                  />
-                </div>
-                <div className="sm:col-span-3">
-                  <label className="block text-xs font-semibold mb-1">Alamat Domisili Murid</label>
-                  <input
-                    type="text"
-                    value={editingStudent.alamat}
-                    onChange={(e) =>
-                      setEditingStudent({ ...editingStudent, alamat: e.target.value })
                     }
                     className="w-full px-3 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
                   />
@@ -1508,6 +2282,11 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
           </div>
         </div>
       )}
+      <StudentInfoModal
+        student={infoStudent}
+        onClose={() => setInfoStudent(null)}
+        onEdit={isStaff || role === 'Siswa' ? openEditModal : undefined}
+      />
     </div>
   );
 };

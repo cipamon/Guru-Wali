@@ -12,6 +12,8 @@ import {
 import { doc, setDoc } from 'firebase/firestore';
 import { COLLECTIONS, db, handleFirestoreError, OperationType } from '../lib/firebase';
 import { compressImageFile } from '../lib/imageUtils';
+import { SmartPhoto } from './SmartPhoto';
+import { StudentInfoModal } from './StudentInfoModal';
 import type { UserRole, WcMessage, WcStudent, WcUser } from '../types/waliconnect';
 
 interface CommunicationViewProps {
@@ -57,6 +59,7 @@ export const CommunicationView: React.FC<CommunicationViewProps> = ({
   const [classFilter, setClassFilter] = useState<string>('Semua');
   const [roleFilter, setRoleFilter] = useState<'Semua' | UserRole>('Semua');
   const [messageSearch, setMessageSearch] = useState('');
+  const [infoStudent, setInfoStudent] = useState<WcStudent | null>(null);
 
   useEffect(() => {
     setContactSearch(searchQuery);
@@ -362,7 +365,20 @@ export const CommunicationView: React.FC<CommunicationViewProps> = ({
                     }`}
                   >
                     <div className="flex items-center justify-between gap-2">
-                      <p className="font-bold truncate">{s.nama_lengkap}</p>
+                      <div className="flex items-center gap-2 min-w-0">
+                        <div className="w-6 h-6 rounded-full overflow-hidden bg-slate-200 dark:bg-slate-700 shrink-0 flex items-center justify-center">
+                          <SmartPhoto
+                            src={s.foto_url}
+                            alt={s.nama_lengkap}
+                            fallback={
+                              <span className="text-[9px] font-bold text-slate-500">
+                                {s.nama_lengkap.slice(0, 2).toUpperCase()}
+                              </span>
+                            }
+                          />
+                        </div>
+                        <p className="font-bold truncate">{s.nama_lengkap}</p>
+                      </div>
                       {stats.count > 0 && (
                         <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md bg-blue-100 dark:bg-blue-900/50 text-blue-700 dark:text-blue-300 text-[10px] font-semibold shrink-0">
                           <MessageSquare className="w-2.5 h-2.5" />
@@ -433,9 +449,20 @@ export const CommunicationView: React.FC<CommunicationViewProps> = ({
                 ? 'Ruang Komunikasi Perwalian Murid'
                 : 'Pesan Langsung Antar Akun'}
             </p>
-            <h3 className="text-base font-bold text-slate-900 dark:text-white truncate">
-              {activeTitle}
-            </h3>
+            {channelType === 'student' && activeStudent ? (
+              <button
+                type="button"
+                onClick={() => setInfoStudent(activeStudent)}
+                title="Klik nama untuk melihat pop-up informasi murid"
+                className="text-left text-base font-bold text-slate-900 dark:text-white hover:text-blue-600 dark:hover:text-blue-400 hover:underline truncate cursor-pointer block max-w-full"
+              >
+                {activeTitle}
+              </button>
+            ) : (
+              <h3 className="text-base font-bold text-slate-900 dark:text-white truncate">
+                {activeTitle}
+              </h3>
+            )}
             {activeSubtitle && (
               <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
                 {activeSubtitle}
@@ -578,6 +605,7 @@ export const CommunicationView: React.FC<CommunicationViewProps> = ({
           </div>
         </form>
       </div>
+      <StudentInfoModal student={infoStudent} onClose={() => setInfoStudent(null)} />
     </div>
   );
 };

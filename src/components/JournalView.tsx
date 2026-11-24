@@ -12,6 +12,8 @@ import {
 import { deleteDoc, doc, setDoc } from 'firebase/firestore';
 import { COLLECTIONS, db, handleFirestoreError, OperationType } from '../lib/firebase';
 import { compressImageFile } from '../lib/imageUtils';
+import { SmartPhoto } from './SmartPhoto';
+import { StudentInfoModal } from './StudentInfoModal';
 import type {
   KanbanStatus,
   LogKategori,
@@ -43,6 +45,7 @@ export const JournalView: React.FC<JournalViewProps> = ({
 }) => {
   const isStaff = currentUser.role === 'Guru Wali' || currentUser.role === 'Admin';
   const [filterCat, setFilterCat] = useState<'Semua' | LogKategori>('Semua');
+  const [infoStudent, setInfoStudent] = useState<WcStudent | null>(null);
 
   const visibleLogs = logs.filter((l) => {
     if (!isStaff && currentUser.linked_student_id && l.student_id !== currentUser.linked_student_id) {
@@ -208,12 +211,7 @@ export const JournalView: React.FC<JournalViewProps> = ({
             >
               {logItem.foto_url && (
                 <div className="w-full md:w-44 h-36 rounded-xl overflow-hidden bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shrink-0">
-                  <img
-                    src={logItem.foto_url}
-                    alt={logItem.topik}
-                    referrerPolicy="no-referrer"
-                    className="w-full h-full object-cover"
-                  />
+                  <SmartPhoto src={logItem.foto_url} alt={logItem.topik} />
                 </div>
               )}
 
@@ -251,7 +249,21 @@ export const JournalView: React.FC<JournalViewProps> = ({
                   {logItem.topik}
                 </h3>
                 <p className="text-xs text-slate-500 dark:text-slate-400">
-                  Murid: <strong>{logItem.student_name}</strong> · Dicatat oleh {logItem.author_name} ({logItem.author_role})
+                  Murid:{' '}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const matched = students.find(
+                        (s) => s.id === logItem.student_id || s.nama_lengkap === logItem.student_name
+                      );
+                      if (matched) setInfoStudent(matched);
+                    }}
+                    title="Klik nama untuk melihat pop-up informasi murid"
+                    className="font-bold text-slate-900 dark:text-white hover:text-blue-600 dark:hover:text-blue-400 hover:underline cursor-pointer"
+                  >
+                    {logItem.student_name}
+                  </button>{' '}
+                  · Dicatat oleh {logItem.author_name} ({logItem.author_role})
                 </p>
 
                 <p className="text-xs text-slate-700 dark:text-slate-300 leading-relaxed whitespace-pre-line">
@@ -482,6 +494,7 @@ export const JournalView: React.FC<JournalViewProps> = ({
           </div>
         </div>
       )}
+      <StudentInfoModal student={infoStudent} onClose={() => setInfoStudent(null)} />
     </div>
   );
 };
