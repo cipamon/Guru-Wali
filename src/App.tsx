@@ -7,6 +7,7 @@ import {
   MessageSquare,
   Megaphone,
   UserCog,
+  UserPlus,
   Printer,
   Search,
   Sun,
@@ -31,6 +32,7 @@ import {
   testConnection,
 } from './lib/firebase';
 import { applyAppTheme } from './lib/themeUtils';
+import type { PrintTablePayload } from './lib/docExportImport';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { LoginView } from './components/LoginView';
 import { DashboardHome } from './components/DashboardHome';
@@ -69,6 +71,7 @@ function getMenuForRole(role: UserRole): MenuItem[] {
       { id: 'journal', label: 'Buku Jurnal Perwalian', icon: <BookOpen className="w-4 h-4" /> },
       { id: 'communication', label: 'Komunikasi Wali & Siswa', icon: <MessageSquare className="w-4 h-4" /> },
       { id: 'announcements', label: 'Agenda & Pengumuman', icon: <Megaphone className="w-4 h-4" /> },
+      { id: 'add_account', label: 'Tambah Akun', icon: <UserPlus className="w-4 h-4" /> },
       { id: 'accounts', label: 'Tautan Akun Wali', icon: <UserCog className="w-4 h-4" /> },
       { id: 'print_f4', label: 'Cetak Laporan SOP (F4)', icon: <Printer className="w-4 h-4" /> },
     ];
@@ -101,6 +104,7 @@ function getMenuForRole(role: UserRole): MenuItem[] {
     { id: 'journal', label: 'Log Konseling Lintas Kelas', icon: <BookOpen className="w-4 h-4" /> },
     { id: 'communication', label: 'Koordinasi Guru & Wali', icon: <MessageSquare className="w-4 h-4" /> },
     { id: 'announcements', label: 'Papan Informasi Sekolah', icon: <Megaphone className="w-4 h-4" /> },
+    { id: 'add_account', label: 'Tambah Akun', icon: <UserPlus className="w-4 h-4" /> },
     { id: 'accounts', label: 'Manajemen Akun & Role', icon: <UserCog className="w-4 h-4" /> },
     { id: 'print_f4', label: 'Arsip & Cetak SOP (F4)', icon: <Printer className="w-4 h-4" /> },
     { id: 'admin_settings', label: 'Pengaturan Aplikasi & Tema', icon: <SlidersHorizontal className="w-4 h-4" /> },
@@ -129,6 +133,29 @@ function WaliConnectApp() {
   const [searchQuery, setSearchQuery] = useState('');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [isSeeding, setIsSeeding] = useState(false);
+  const [printTableData, setPrintTableData] = useState<PrintTablePayload | null>(null);
+
+  useEffect(() => {
+    const onPrintTable = (e: Event) => {
+      const payload = (e as CustomEvent<PrintTablePayload>).detail;
+      if (!payload) return;
+      setPrintTableData(payload);
+      document.body.classList.add('printing-table-mode');
+      const cleanup = () => {
+        document.body.classList.remove('printing-table-mode');
+        setPrintTableData(null);
+      };
+      window.addEventListener('afterprint', cleanup, { once: true });
+      setTimeout(() => {
+        window.print();
+        setTimeout(() => {
+          document.body.classList.remove('printing-table-mode');
+        }, 1200);
+      }, 90);
+    };
+    window.addEventListener('wc-print-table', onPrintTable);
+    return () => window.removeEventListener('wc-print-table', onPrintTable);
+  }, []);
 
   useEffect(() => {
     document.documentElement.classList.toggle('dark', darkMode);
@@ -358,7 +385,8 @@ function WaliConnectApp() {
   );
 
   return (
-    <div className="min-h-screen bg-[#f4f7fe] dark:bg-slate-950 text-slate-900 dark:text-slate-100 flex">
+    <>
+      <div className="app-shell min-h-screen bg-[#f4f7fe] dark:bg-slate-950 text-slate-900 dark:text-slate-100 flex">
       {/* Desktop Sidebar */}
       <aside className="no-print hidden lg:flex lg:w-64 lg:flex-col lg:fixed lg:inset-y-0 bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 z-30">
         {renderSidebarContent()}
@@ -444,7 +472,8 @@ function WaliConnectApp() {
           {currentUser.role === 'Guru Wali' &&
             anyPerwalianConfigured &&
             myPerwalianStudents.length === 0 &&
-            currentMenu.id !== 'accounts' && (
+            currentMenu.id !== 'accounts' &&
+            currentMenu.id !== 'add_account' && (
               <div className="mb-5 px-4 py-3 rounded-2xl bg-amber-50 dark:bg-amber-950/50 border border-amber-200 dark:border-amber-800 flex flex-wrap items-center justify-between gap-3 text-xs text-amber-800 dark:text-amber-200">
                 <span>
                   Belum ada siswa perwalian yang ditetapkan untuk akun Anda. Silakan pilih siswa perwalian di menu{' '}
@@ -519,6 +548,15 @@ function WaliConnectApp() {
             />
           )}
 
+          {currentMenu.id === 'add_account' && (
+            <AccountsView
+              users={users}
+              students={students}
+              currentUser={currentUser}
+              focusMode="add_only"
+            />
+          )}
+
           {currentMenu.id === 'accounts' && (
             <AccountsView
               users={users}
@@ -532,6 +570,7 @@ function WaliConnectApp() {
               config={printConfig}
               students={effectiveStudents}
               logs={effectiveLogs}
+              currentUser={currentUser}
             />
           )}
 
@@ -549,6 +588,46 @@ function WaliConnectApp() {
         </main>
       </div>
     </div>
+    {printTableData && (
+      <div className="hidden print-table-portal bg-white text-slate-900">
+        <div className="mb-4 pb-2 border-b-2 border-slate-900">
+          <h1 className="text-base font-bold uppercase tracking-wide">{printTableData.title}</h1>
+          <p className="text-xs text-slate-600 mt-0.5">
+            {printTableData.subtitle ? `${printTableData.subtitle} · ` : ''}
+            Dicetak: {new Date().toLocaleDateString('id-ID')}
+          </p>
+        </div>
+        <table className="w-full border-collapse text-[11px]">
+          <thead>
+            <tr>
+              {printTableData.headers.map((h, i) => (
+                <th
+                  key={i}
+                  className="border border-slate-400 bg-slate-100 px-2 py-1.5 text-left font-bold"
+                >
+                  {h}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {printTableData.rows.map((row, rIdx) => (
+              <tr key={rIdx}>
+                {row.map((cell, cIdx) => (
+                  <td
+                    key={cIdx}
+                    className="border border-slate-300 px-2 py-1.5 align-top whitespace-pre-line"
+                  >
+                    {cell || '-'}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    )}
+    </>
   );
 }
 

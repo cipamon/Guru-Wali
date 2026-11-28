@@ -137,4 +137,16 @@
     page-break-after: auto;
     break-after: auto;
   }
+
+  body.printing-table-mode .app-shell {
+    display: none !important;
+  }
+
+  body.printing-table-mode .print-table-portal {
+    display: block !important;
+    padding: 12mm 14mm !important;
+    background: #ffffff !important;
+    color: #0f172a !important;
+  }
 }
+

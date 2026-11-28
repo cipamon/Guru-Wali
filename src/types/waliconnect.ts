@@ -79,6 +79,69 @@ export interface BkDetail {
   f_kesediaan_orang_tua: string;
 }
 
+export interface PerwalianIndukData {
+  // A. Data Identitas & Kontak Siswa
+  nik: string;
+  media_sosial: string;
+  // B. Data Alamat, Domisili & Geografis
+  alamat_kk: string;
+  rt_rw: string;
+  kelurahan: string;
+  kecamatan: string;
+  kabupaten_kota: string;
+  kode_pos: string;
+  alamat_domisili: string;
+  status_tempat_tinggal: string;
+  koordinat_rumah: string;
+  link_google_maps: string;
+  jarak_tempuh_km: string;
+  waktu_tempuh_menit: string;
+  moda_transportasi: string;
+  // C. Data Orang Tua / Wali & Kontak Darurat
+  status_ayah: string;
+  hp_ayah: string;
+  pendidikan_ayah: string;
+  penghasilan_ayah: string;
+  status_ibu: string;
+  hp_ibu: string;
+  pendidikan_ibu: string;
+  penghasilan_ibu: string;
+  nama_wali: string;
+  hubungan_wali: string;
+  hp_wali: string;
+  alamat_wali: string;
+  kontak_darurat_nama: string;
+  kontak_darurat_hp: string;
+  // D. Data Sosial-Ekonomi & Bantuan Pendidikan
+  anak_ke: string;
+  jumlah_saudara: string;
+  status_kepemilikan_rumah: string;
+  penerima_bantuan: string;
+  jenis_bantuan: string;
+  no_kartu_bantuan: string;
+  kendala_ekonomi: string;
+  // E. Data Kesehatan Fisik & Psikologis
+  golongan_darah: string;
+  tinggi_badan_cm: string;
+  berat_badan_kg: string;
+  riwayat_penyakit: string;
+  riwayat_alergi: string;
+  kebutuhan_alat_bantu: string;
+  kondisi_psikologis: string;
+  kerentanan_sosial: string;
+  // F. Data Akademik, Minat & Kebiasaan
+  asal_sekolah: string;
+  mapel_disukai: string;
+  mapel_sulit: string;
+  gaya_belajar: string;
+  hobi_bakat: string;
+  prestasi: string;
+  ekskul_organisasi: string;
+  cita_cita: string;
+  aktivitas_luar_sekolah: string;
+  kepemilikan_gawai_internet: string;
+}
+
 export interface WcStudent {
   id: string;
   nama_lengkap: string;
@@ -116,6 +179,10 @@ export interface WcStudent {
   kehadiran: boolean[]; // 9 sessions
   perkembangan: PerkembanganAspek;
   bk_detail: BkDetail;
+  perwalian_induk?: PerwalianIndukData;
+  data_locked?: boolean;
+  data_locked_at?: string;
+  data_locked_by?: string;
   updated_at?: string;
 }
 
@@ -218,8 +285,13 @@ export interface SignatureSettings {
 export interface WcPrintConfig extends SignatureSettings {
   tahun_ajaran: string;
   tempat_tanggal: string;
+  kota_cetak?: string;
+  tanggal_cetak_mode?: 'auto' | 'manual';
+  ttd_kanan_mode?: 'auto_user' | 'manual';
   logo_kiri: string;
   logo_kanan: string;
+  logo_kiri_size?: number;
+  logo_kanan_size?: number;
   kop_lines: KopLine[];
   nama_sekolah: string;
   nama_guru_wali: string;
@@ -272,6 +344,7 @@ export type NavTabId =
   | 'journal'
   | 'communication'
   | 'announcements'
+  | 'add_account'
   | 'accounts'
   | 'print_f4'
   | 'admin_settings';

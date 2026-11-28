@@ -42,7 +42,8 @@ service cloud.firestore {
           'alamat', 'agama', 'hobi', 'status_siswa', 'guru_wali_id', 'guru_wali_nama', 'wali_kelas', 'guru_bk',
           'nama_ayah', 'pekerjaan_ayah', 'nama_ibu', 'pekerjaan_ibu', 'alamat_ortu', 'kontak_ortu',
           'deskripsi_diri', 'rencana_lulus', 'prodi_pilihan', 'langkah_pencapaian', 'catatan_khusus',
-          'foto_url', 'kehadiran', 'perkembangan', 'bk_detail', 'updated_at'
+          'foto_url', 'kehadiran', 'perkembangan', 'bk_detail', 'perwalian_induk',
+          'data_locked', 'data_locked_at', 'data_locked_by', 'updated_at'
         ])
         && isOptStr(data, 'id', 128)
         && isStr(data.nama_lengkap, 1, 160)
@@ -80,6 +81,10 @@ service cloud.firestore {
         && (!('kehadiran' in data) || (data.kehadiran is list && data.kehadiran.size() <= 20))
         && (!('perkembangan' in data) || data.perkembangan is map)
         && (!('bk_detail' in data) || data.bk_detail is map)
+        && (!('perwalian_induk' in data) || data.perwalian_induk is map)
+        && (!('data_locked' in data) || data.data_locked is bool)
+        && isOptStr(data, 'data_locked_at', 64)
+        && isOptStr(data, 'data_locked_by', 160)
         && isOptStr(data, 'updated_at', 64);
     }
 
@@ -143,7 +148,8 @@ service cloud.firestore {
 
     function isValidWcPrintConfig(data) {
       return data.keys().hasOnly([
-          'tahun_ajaran', 'tempat_tanggal', 'logo_kiri', 'logo_kanan', 'kop_lines',
+          'tahun_ajaran', 'tempat_tanggal', 'kota_cetak', 'tanggal_cetak_mode', 'ttd_kanan_mode',
+          'logo_kiri', 'logo_kanan', 'logo_kiri_size', 'logo_kanan_size', 'kop_lines',
           'ttd_layout', 'ttd_offset_x', 'ttd_left_offset_x', 'ttd_right_offset_x', 'ttd_spacer', 'ttd_align',
           'ttd_left_rows', 'ttd_right_rows', 'nama_sekolah',
           'nama_guru_wali', 'nip_guru_wali', 'nama_kepsek', 'nip_kepsek',
@@ -151,8 +157,13 @@ service cloud.firestore {
         ])
         && isOptStr(data, 'tahun_ajaran', 64)
         && isOptStr(data, 'tempat_tanggal', 160)
+        && isOptStr(data, 'kota_cetak', 100)
+        && (!('tanggal_cetak_mode' in data) || data.tanggal_cetak_mode in ['auto', 'manual'])
+        && (!('ttd_kanan_mode' in data) || data.ttd_kanan_mode in ['auto_user', 'manual'])
         && isOptStr(data, 'logo_kiri', 600000)
         && isOptStr(data, 'logo_kanan', 600000)
+        && (!('logo_kiri_size' in data) || (data.logo_kiri_size is number && data.logo_kiri_size >= 24 && data.logo_kiri_size <= 220))
+        && (!('logo_kanan_size' in data) || (data.logo_kanan_size is number && data.logo_kanan_size >= 24 && data.logo_kanan_size <= 220))
         && (!('kop_lines' in data) || (data.kop_lines is list && data.kop_lines.size() <= 10))
         && (!('ttd_layout' in data) || data.ttd_layout in ['kepsek_guru', 'guru_kepsek', 'stacked'])
         && (!('ttd_offset_x' in data) || data.ttd_offset_x is number)

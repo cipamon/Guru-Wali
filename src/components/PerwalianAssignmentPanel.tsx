@@ -12,8 +12,17 @@ import {
 } from 'lucide-react';
 import { doc, updateDoc, writeBatch } from 'firebase/firestore';
 import { COLLECTIONS, db, handleFirestoreError, OperationType } from '../lib/firebase';
+import {
+  downloadRecordsXlsTemplate,
+  exportRecordsToPdf,
+  exportRecordsToWord,
+  exportRecordsToXls,
+  importRecordsFromFile,
+  triggerTablePrint,
+} from '../lib/docExportImport';
 import { SmartPhoto } from './SmartPhoto';
 import { StudentInfoModal } from './StudentInfoModal';
+import { DataActionsBar } from './DataActionsBar';
 import type { WcStudent, WcUser } from '../types/waliconnect';
 
 interface PerwalianAssignmentPanelProps {
@@ -457,82 +466,351 @@ export const PerwalianAssignmentPanel: React.FC<PerwalianAssignmentPanelProps> =
 
       {/* Quick Perwalian Matrix Table (Admin) */}
       {isAdmin && (
-        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl overflow-hidden">
-          <div className="px-6 py-4 border-b border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-2">
-            <div className="flex items-center gap-2">
-              <Users className="w-4 h-4 text-blue-600 dark:text-blue-400" />
-              <h3 className="text-sm font-bold text-slate-900 dark:text-white">
-                Matriks Cepat Penetapan Guru Wali per Murid
-              </h3>
-            </div>
-            <span className="text-[11px] text-slate-500 dark:text-slate-400 inline-flex items-center gap-1">
-              <Sparkles className="w-3.5 h-3.5 text-blue-500" /> Perubahan dropdown tersimpan langsung
-            </span>
-          </div>
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs">
-              <thead className="bg-slate-50 dark:bg-slate-800/70 border-b border-slate-200 dark:border-slate-800">
-                <tr>
-                  <th className="py-3 px-4 font-bold">Nama Murid</th>
-                  <th className="py-3 px-4 font-bold">Kelas / NIS</th>
-                  <th className="py-3 px-4 font-bold">Wali Kelas</th>
-                  <th className="py-3 px-4 font-bold">Guru Wali Dampingan</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                {students.map((st) => (
-                  <tr key={st.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/40">
-                    <td className="py-2.5 px-4 font-semibold text-slate-900 dark:text-white">
-                      <button
-                        type="button"
-                        onClick={() => setInfoStudent(st)}
-                        className="text-left hover:text-blue-600 hover:underline cursor-pointer"
-                      >
-                        {st.nama_lengkap}
-                      </button>
-                    </td>
-                    <td className="py-2.5 px-4 text-slate-600 dark:text-slate-300">
-                      {st.kelas} · <span className="font-mono-tabular">{st.nis}</span>
-                    </td>
-                    <td className="py-2.5 px-4 text-slate-500 dark:text-slate-400">
-                      {st.wali_kelas || '-'}
-                    </td>
-                    <td className="py-2.5 px-4">
-                      <div className="flex items-center gap-2">
-                        <select
-                          value={st.guru_wali_id || ''}
-                          disabled={updatingSingleId === st.id}
-                          onChange={(e) => handleInlineAssignGuru(st.id, e.target.value)}
-                          className="px-2.5 py-1.5 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-medium min-w-[210px]"
-                        >
-                          <option value="">-- Belum Dipilih --</option>
-                          {guruList.map((g) => (
-                            <option key={g.id} value={g.id}>
-                              {g.nama} ({g.role})
-                            </option>
-                          ))}
-                        </select>
-                        {updatingSingleId === st.id && (
-                          <Loader2 className="w-3.5 h-3.5 animate-spin text-blue-600" />
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-                {students.length === 0 && (
-                  <tr>
-                    <td colSpan={4} className="py-8 text-center text-slate-500">
-                      Belum ada data murid di database.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
+        <QuickPerwalianMatrix
+          students={students}
+          guruList={guruList}
+          updatingSingleId={updatingSingleId}
+          onInlineAssign={handleInlineAssignGuru}
+          onOpenInfo={setInfoStudent}
+        />
       )}
 
       <StudentInfoModal student={infoStudent} onClose={() => setInfoStudent(null)} />
+    </div>
+  );
+};
+
+interface QuickPerwalianMatrixProps {
+  students: WcStudent[];
+  guruList: WcUser[];
+  updatingSingleId: string | null;
+  onInlineAssign: (studentId: string, guruId: string) => void;
+  onOpenInfo: (st: WcStudent) => void;
+}
+
+const MATRIX_ASSIGN_HEADERS = ['NIS', 'Nama Murid', 'Kelas', 'Wali Kelas', 'Guru Wali'];
+
+function pickAssignCell(row: Record<string, unknown>, ...keys: string[]): string {
+  const entries = Object.entries(row);
+  for (const key of keys) {
+    const found = entries.find(
+      ([k]) => k.trim().toLowerCase() === key.trim().toLowerCase()
+    );
+    if (found && String(found[1] ?? '').trim()) {
+      return String(found[1]).trim();
+    }
+  }
+  return '';
+}
+
+const QuickPerwalianMatrix: React.FC<QuickPerwalianMatrixProps> = ({
+  students,
+  guruList,
+  updatingSingleId,
+  onInlineAssign,
+  onOpenInfo,
+}) => {
+  const [checkedIds, setCheckedIds] = useState<string[]>([]);
+  const [notice, setNotice] = useState('');
+  const [error, setError] = useState('');
+
+  const allIds = students.map((s) => s.id);
+  const activeChecked = checkedIds.filter((id) => allIds.includes(id));
+  const allSelected = allIds.length > 0 && activeChecked.length === allIds.length;
+  const targetStudents =
+    activeChecked.length > 0 ? students.filter((s) => activeChecked.includes(s.id)) : students;
+
+  const toggleSelect = (id: string) => {
+    setCheckedIds((prev) =>
+      prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
+    );
+  };
+
+  const toggleSelectAll = () => {
+    setCheckedIds(allSelected ? [] : allIds);
+  };
+
+  const handleBulkClearGuru = async () => {
+    setError('');
+    setNotice('');
+    try {
+      const batch = writeBatch(db);
+      const now = new Date().toISOString();
+      activeChecked.forEach((id) => {
+        batch.update(doc(db, COLLECTIONS.students, id), {
+          guru_wali_id: '',
+          guru_wali_nama: '',
+          updated_at: now,
+        });
+      });
+      await batch.commit();
+      setNotice(`Penetapan Guru Wali untuk ${activeChecked.length} murid berhasil dikosongkan.`);
+      setCheckedIds([]);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Gagal memperbarui penetapan Guru Wali.');
+    }
+  };
+
+  const handleTemplateXls = () => {
+    const sample = students[0];
+    downloadRecordsXlsTemplate(
+      [
+        {
+          NIS: sample?.nis || '2025001',
+          'Nama Murid': sample?.nama_lengkap || 'Ahmad Rizky Pratama',
+          Kelas: sample?.kelas || 'XI IPA 1',
+          'Wali Kelas': sample?.wali_kelas || 'Siti Aminah, S.Pd.',
+          'Guru Wali': guruList[0]?.nama || 'Dra. Ratna Sari Dewi, M.Pd.',
+        },
+      ],
+      [
+        'Petunjuk Import Penetapan Guru Wali',
+        '1. Cocokkan baris murid berdasarkan NIS atau Nama Murid.',
+        '2. Kolom Guru Wali diisi nama Guru Wali yang sudah terdaftar pada akun pengguna.',
+      ],
+      'Penetapan_Guru_Wali',
+      'Template_Penetapan_Guru_Wali.xlsx'
+    );
+  };
+
+  const handleTemplateWord = async () => {
+    const sample = students[0];
+    await exportRecordsToWord(
+      'TEMPLATE IMPORT PENETAPAN GURU WALI',
+      'Isi tabel berikut, simpan .docx, lalu unggah via Import XLS / Word.',
+      MATRIX_ASSIGN_HEADERS,
+      [
+        [
+          sample?.nis || '2025001',
+          sample?.nama_lengkap || 'Ahmad Rizky Pratama',
+          sample?.kelas || 'XI IPA 1',
+          sample?.wali_kelas || 'Siti Aminah, S.Pd.',
+          guruList[0]?.nama || 'Dra. Ratna Sari Dewi, M.Pd.',
+        ],
+      ],
+      'Template_Penetapan_Guru_Wali.docx',
+      true
+    );
+  };
+
+  const handleImport = async (file: File) => {
+    setError('');
+    setNotice('');
+    try {
+      const rows = await importRecordsFromFile(file);
+      const batch = writeBatch(db);
+      const now = new Date().toISOString();
+      let updated = 0;
+
+      rows.forEach((row) => {
+        const nis = pickAssignCell(row, 'NIS');
+        const nama = pickAssignCell(row, 'Nama Murid', 'Nama');
+        const guruName = pickAssignCell(row, 'Guru Wali', 'Guru Wali Dampingan');
+        const st = students.find(
+          (s) =>
+            (nis && s.nis.trim().toLowerCase() === nis.toLowerCase()) ||
+            (nama && s.nama_lengkap.trim().toLowerCase() === nama.toLowerCase())
+        );
+        if (!st) return;
+
+        const guru = guruList.find(
+          (g) => g.nama.trim().toLowerCase() === guruName.toLowerCase()
+        );
+        batch.update(doc(db, COLLECTIONS.students, st.id), {
+          guru_wali_id: guru ? guru.id : '',
+          guru_wali_nama: guru ? guru.nama : guruName,
+          updated_at: now,
+        });
+        updated += 1;
+      });
+
+      if (updated === 0) {
+        throw new Error('Tidak ada data murid yang cocok pada file penetapan Guru Wali.');
+      }
+      await batch.commit();
+      setNotice(`Berhasil memperbarui penetapan Guru Wali untuk ${updated} murid.`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Gagal mengimpor penetapan Guru Wali.');
+    }
+  };
+
+  const toRows = (items: WcStudent[]) =>
+    items.map((s) => [
+      s.nis,
+      s.nama_lengkap,
+      s.kelas,
+      s.wali_kelas || '-',
+      s.guru_wali_nama || '-',
+    ]);
+
+  return (
+    <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl overflow-hidden">
+      <div className="px-6 py-4 border-b border-slate-200 dark:border-slate-800 space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <Users className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+            <h3 className="text-sm font-bold text-slate-900 dark:text-white">
+              Matriks Cepat Penetapan Guru Wali per Murid
+            </h3>
+          </div>
+          <span className="text-[11px] text-slate-500 dark:text-slate-400 inline-flex items-center gap-1">
+            <Sparkles className="w-3.5 h-3.5 text-blue-500" /> Perubahan dropdown tersimpan langsung
+          </span>
+        </div>
+
+        <DataActionsBar
+          totalCount={students.length}
+          selectedCount={activeChecked.length}
+          allSelected={allSelected}
+          onToggleSelectAll={toggleSelectAll}
+          canManage={true}
+          onBulkDelete={handleBulkClearGuru}
+          bulkDeleteLabel="kosongkan guru wali"
+          onDownloadTemplateXls={handleTemplateXls}
+          onDownloadTemplateWord={handleTemplateWord}
+          onImportFile={handleImport}
+          onExportXls={() =>
+            exportRecordsToXls(
+              targetStudents.map((s) => ({
+                NIS: s.nis,
+                'Nama Murid': s.nama_lengkap,
+                Kelas: s.kelas,
+                'Wali Kelas': s.wali_kelas || '-',
+                'Guru Wali': s.guru_wali_nama || '-',
+              })),
+              'Penetapan_Guru_Wali',
+              'Penetapan_Guru_Wali.xlsx'
+            )
+          }
+          onExportPdf={() =>
+            exportRecordsToPdf(
+              'MATRIKS PENETAPAN GURU WALI PER MURID',
+              `Jumlah Murid: ${targetStudents.length}`,
+              MATRIX_ASSIGN_HEADERS,
+              toRows(targetStudents),
+              'Penetapan_Guru_Wali.pdf',
+              true
+            )
+          }
+          onExportWord={() =>
+            exportRecordsToWord(
+              'MATRIKS PENETAPAN GURU WALI PER MURID',
+              `Jumlah Murid: ${targetStudents.length}`,
+              MATRIX_ASSIGN_HEADERS,
+              toRows(targetStudents),
+              'Penetapan_Guru_Wali.docx',
+              true
+            )
+          }
+          onPrint={() =>
+            triggerTablePrint({
+              title: 'MATRIKS PENETAPAN GURU WALI PER MURID',
+              subtitle: `Jumlah Murid: ${targetStudents.length}`,
+              headers: MATRIX_ASSIGN_HEADERS,
+              rows: toRows(targetStudents),
+              landscape: true,
+            })
+          }
+          notice={notice}
+          error={error}
+        />
+      </div>
+
+      <div className="overflow-x-auto">
+        <table className="w-full text-left text-xs">
+          <thead className="bg-slate-50 dark:bg-slate-800/70 border-b border-slate-200 dark:border-slate-800">
+            <tr>
+              <th className="py-3 px-3 w-10">
+                <button
+                  type="button"
+                  onClick={toggleSelectAll}
+                  title="Pilih Semua"
+                  className="p-0.5 text-slate-500 hover:text-blue-600 cursor-pointer"
+                >
+                  {allSelected ? (
+                    <CheckSquare className="w-4 h-4 text-blue-600" />
+                  ) : (
+                    <Square className="w-4 h-4" />
+                  )}
+                </button>
+              </th>
+              <th className="py-3 px-4 font-bold">Nama Murid</th>
+              <th className="py-3 px-4 font-bold">Kelas / NIS</th>
+              <th className="py-3 px-4 font-bold">Wali Kelas</th>
+              <th className="py-3 px-4 font-bold">Guru Wali Dampingan</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+            {students.map((st) => {
+              const isChecked = activeChecked.includes(st.id);
+              return (
+                <tr
+                  key={st.id}
+                  className={`hover:bg-slate-50 dark:hover:bg-slate-800/40 ${
+                    isChecked ? 'bg-blue-50/70 dark:bg-blue-950/30' : ''
+                  }`}
+                >
+                  <td className="py-2.5 px-3">
+                    <button
+                      type="button"
+                      onClick={() => toggleSelect(st.id)}
+                      className="p-0.5 text-slate-500 hover:text-blue-600 cursor-pointer"
+                    >
+                      {isChecked ? (
+                        <CheckSquare className="w-4 h-4 text-blue-600" />
+                      ) : (
+                        <Square className="w-4 h-4" />
+                      )}
+                    </button>
+                  </td>
+                  <td className="py-2.5 px-4 font-semibold text-slate-900 dark:text-white">
+                    <button
+                      type="button"
+                      onClick={() => onOpenInfo(st)}
+                      className="text-left hover:text-blue-600 hover:underline cursor-pointer"
+                    >
+                      {st.nama_lengkap}
+                    </button>
+                  </td>
+                  <td className="py-2.5 px-4 text-slate-600 dark:text-slate-300">
+                    {st.kelas} · <span className="font-mono-tabular">{st.nis}</span>
+                  </td>
+                  <td className="py-2.5 px-4 text-slate-500 dark:text-slate-400">
+                    {st.wali_kelas || '-'}
+                  </td>
+                  <td className="py-2.5 px-4">
+                    <div className="flex items-center gap-2">
+                      <select
+                        value={st.guru_wali_id || ''}
+                        disabled={updatingSingleId === st.id}
+                        onChange={(e) => onInlineAssign(st.id, e.target.value)}
+                        className="px-2.5 py-1.5 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-medium min-w-[210px]"
+                      >
+                        <option value="">-- Belum Dipilih --</option>
+                        {guruList.map((g) => (
+                          <option key={g.id} value={g.id}>
+                            {g.nama} ({g.role})
+                          </option>
+                        ))}
+                      </select>
+                      {updatingSingleId === st.id && (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin text-blue-600" />
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+            {students.length === 0 && (
+              <tr>
+                <td colSpan={5} className="py-8 text-center text-slate-500">
+                  Belum ada data murid di database.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 };

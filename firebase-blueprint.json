@@ -57,6 +57,10 @@
         "kehadiran": { "type": "array" },
         "perkembangan": { "type": "object" },
         "bk_detail": { "type": "object" },
+        "perwalian_induk": { "type": "object" },
+        "data_locked": { "type": "boolean" },
+        "data_locked_at": { "type": "string", "maxLength": 64 },
+        "data_locked_by": { "type": "string", "maxLength": 160 },
         "updated_at": { "type": "string", "maxLength": 64 }
       },
       "required": ["nama_lengkap", "kelas", "nis"]
@@ -125,8 +129,13 @@
       "properties": {
         "tahun_ajaran": { "type": "string", "maxLength": 64 },
         "tempat_tanggal": { "type": "string", "maxLength": 160 },
+        "kota_cetak": { "type": "string", "maxLength": 100 },
+        "tanggal_cetak_mode": { "type": "string", "enum": ["auto", "manual"] },
+        "ttd_kanan_mode": { "type": "string", "enum": ["auto_user", "manual"] },
         "logo_kiri": { "type": "string", "maxLength": 600000 },
         "logo_kanan": { "type": "string", "maxLength": 600000 },
+        "logo_kiri_size": { "type": "number" },
+        "logo_kanan_size": { "type": "number" },
         "kop_lines": { "type": "array" },
         "ttd_layout": { "type": "string", "enum": ["kepsek_guru", "guru_kepsek", "stacked"] },
         "ttd_offset_x": { "type": "number" },

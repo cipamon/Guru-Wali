@@ -1,13 +1,49 @@
 import React, { useState } from 'react';
-import { Calendar, Clock, MapPin, Plus, Trash2, Upload, X, Loader2 } from 'lucide-react';
+import {
+  Calendar,
+  Clock,
+  MapPin,
+  Plus,
+  Trash2,
+  Edit3,
+  Upload,
+  X,
+  Loader2,
+  CheckSquare,
+  Square,
+} from 'lucide-react';
 import { deleteDoc, doc, setDoc } from 'firebase/firestore';
 import { COLLECTIONS, db, handleFirestoreError, OperationType } from '../lib/firebase';
 import { compressImageFile } from '../lib/imageUtils';
+import {
+  downloadRecordsXlsTemplate,
+  exportRecordsToPdf,
+  exportRecordsToWord,
+  exportRecordsToXls,
+  importRecordsFromFile,
+  triggerTablePrint,
+} from '../lib/docExportImport';
+import { DataActionsBar } from './DataActionsBar';
 import type { WcAnnouncement, WcUser } from '../types/waliconnect';
 
 interface AnnouncementsViewProps {
   announcements: WcAnnouncement[];
   currentUser: WcUser;
+}
+
+const ANN_HEADERS = ['Tanggal', 'Waktu', 'Kategori', 'Judul', 'Lokasi', 'Isi', 'Pembuat'];
+
+function pickAnnCell(row: Record<string, unknown>, ...keys: string[]): string {
+  const entries = Object.entries(row);
+  for (const key of keys) {
+    const found = entries.find(
+      ([k]) => k.trim().toLowerCase() === key.trim().toLowerCase()
+    );
+    if (found && String(found[1] ?? '').trim()) {
+      return String(found[1]).trim();
+    }
+  }
+  return '';
 }
 
 export const AnnouncementsView: React.FC<AnnouncementsViewProps> = ({
@@ -16,6 +52,8 @@ export const AnnouncementsView: React.FC<AnnouncementsViewProps> = ({
 }) => {
   const canManage = currentUser.role === 'Guru Wali' || currentUser.role === 'Admin';
   const [modalOpen, setModalOpen] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editingCreatedAt, setEditingCreatedAt] = useState<string>('');
   const [judul, setJudul] = useState('');
   const [isi, setIsi] = useState('');
   const [tanggal, setTanggal] = useState(new Date().toISOString().slice(0, 10));
@@ -25,18 +63,70 @@ export const AnnouncementsView: React.FC<AnnouncementsViewProps> = ({
   const [fotoUrl, setFotoUrl] = useState('');
   const [saving, setSaving] = useState(false);
 
+  const [checkedIds, setCheckedIds] = useState<string[]>([]);
+  const [notice, setNotice] = useState('');
+  const [actionError, setActionError] = useState('');
+
+  const allIds = announcements.map((a) => a.id);
+  const activeChecked = checkedIds.filter((id) => allIds.includes(id));
+  const allSelected = allIds.length > 0 && activeChecked.length === allIds.length;
+  const targetAnnouncements =
+    activeChecked.length > 0
+      ? announcements.filter((a) => activeChecked.includes(a.id))
+      : announcements;
+
+  const toggleSelect = (id: string) => {
+    setCheckedIds((prev) =>
+      prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
+    );
+  };
+
+  const toggleSelectAll = () => {
+    if (allSelected) {
+      setCheckedIds([]);
+    } else {
+      setCheckedIds(allIds);
+    }
+  };
+
+  const openNew = () => {
+    setEditingId(null);
+    setEditingCreatedAt('');
+    setJudul('');
+    setIsi('');
+    setTanggal(new Date().toISOString().slice(0, 10));
+    setWaktu('08.00 - 10.00 WIB');
+    setLokasi('Ruang Bimbingan Sekolah');
+    setKategori('Agenda Perwalian');
+    setFotoUrl('');
+    setModalOpen(true);
+  };
+
+  const openEdit = (ann: WcAnnouncement) => {
+    setEditingId(ann.id);
+    setEditingCreatedAt(ann.created_at || '');
+    setJudul(ann.judul);
+    setIsi(ann.isi);
+    setTanggal(ann.tanggal);
+    setWaktu(ann.waktu || '');
+    setLokasi(ann.lokasi || '');
+    setKategori(ann.kategori || 'Agenda Perwalian');
+    setFotoUrl(ann.foto_url || '');
+    setModalOpen(true);
+  };
+
   const handleUploadPoster = async (file: File | undefined) => {
     if (!file) return;
     const compressed = await compressImageFile(file, 960, 0.74);
     setFotoUrl(compressed);
   };
 
-  const handleCreate = async (e: React.FormEvent) => {
+  const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!judul.trim() || !isi.trim()) return;
     setSaving(true);
     try {
-      const id = `ann-${Date.now()}`;
+      const id = editingId || `ann-${Date.now()}`;
       const payload: WcAnnouncement = {
         id,
         judul: judul.trim(),
@@ -47,15 +137,15 @@ export const AnnouncementsView: React.FC<AnnouncementsViewProps> = ({
         kategori: kategori.trim(),
         author_name: currentUser.nama,
         ...(fotoUrl ? { foto_url: fotoUrl } : {}),
-        created_at: new Date().toISOString(),
+        created_at: editingCreatedAt || new Date().toISOString(),
       };
       await setDoc(doc(db, COLLECTIONS.announcements, id), payload);
       setModalOpen(false);
-      setJudul('');
-      setIsi('');
-      setFotoUrl('');
+      setNotice(
+        editingId ? 'Agenda/pengumuman berhasil diperbarui.' : 'Agenda/pengumuman berhasil diterbitkan.'
+      );
     } catch (err) {
-      handleFirestoreError(err, OperationType.CREATE, COLLECTIONS.announcements);
+      handleFirestoreError(err, OperationType.WRITE, COLLECTIONS.announcements);
     } finally {
       setSaving(false);
     }
@@ -64,33 +154,203 @@ export const AnnouncementsView: React.FC<AnnouncementsViewProps> = ({
   const handleDelete = async (id: string) => {
     try {
       await deleteDoc(doc(db, COLLECTIONS.announcements, id));
+      setCheckedIds((prev) => prev.filter((item) => item !== id));
     } catch (err) {
       handleFirestoreError(err, OperationType.DELETE, `${COLLECTIONS.announcements}/${id}`);
     }
   };
 
+  const handleBulkDelete = async () => {
+    setActionError('');
+    setNotice('');
+    try {
+      await Promise.all(
+        activeChecked.map((id) => deleteDoc(doc(db, COLLECTIONS.announcements, id)))
+      );
+      setNotice(`${activeChecked.length} agenda/pengumuman berhasil dihapus.`);
+      setCheckedIds([]);
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'Gagal menghapus agenda/pengumuman.');
+    }
+  };
+
+  const handleDownloadTemplateXls = () => {
+    downloadRecordsXlsTemplate(
+      [
+        {
+          Judul: 'Pertemuan Orang Tua Murid Semester Genap',
+          Tanggal: new Date().toISOString().slice(0, 10),
+          Waktu: '08.30 - 10.30 WIB',
+          Lokasi: 'Aula Utama Sekolah',
+          Kategori: 'Agenda Perwalian',
+          Isi: 'Undangan evaluasi perkembangan belajar dan rencana tindak lanjut murid.',
+        },
+      ],
+      [
+        'Petunjuk Import Agenda & Pengumuman WaliConnect Pro',
+        'Kolom wajib diisi: Judul dan Isi.',
+        'Format Tanggal: YYYY-MM-DD (misal: 2026-05-18).',
+      ],
+      'Agenda_Pengumuman',
+      'Template_Agenda_Pengumuman.xlsx'
+    );
+  };
+
+  const handleDownloadTemplateWord = async () => {
+    await exportRecordsToWord(
+      'TEMPLATE IMPORT AGENDA & PENGUMUMAN',
+      'Isi tabel di bawah ini, simpan .docx, lalu unggah ke Import XLS / Word.',
+      ['Judul', 'Tanggal', 'Waktu', 'Lokasi', 'Kategori', 'Isi'],
+      [
+        [
+          'Pertemuan Orang Tua Murid Semester Genap',
+          new Date().toISOString().slice(0, 10),
+          '08.30 - 10.30 WIB',
+          'Aula Utama Sekolah',
+          'Agenda Perwalian',
+          'Undangan evaluasi perkembangan belajar dan rencana tindak lanjut murid.',
+        ],
+      ],
+      'Template_Agenda_Pengumuman.docx',
+      true
+    );
+  };
+
+  const handleImportFile = async (file: File) => {
+    setActionError('');
+    setNotice('');
+    try {
+      const rows = await importRecordsFromFile(file);
+      const baseTs = Date.now();
+      const imported: WcAnnouncement[] = [];
+      rows.forEach((row, idx) => {
+        const j = pickAnnCell(row, 'Judul', 'Judul Agenda');
+        const content = pickAnnCell(row, 'Isi', 'Isi Pengumuman', 'Keterangan');
+        if (!j || !content) return;
+        imported.push({
+          id: `ann-imp-${baseTs}-${idx}`,
+          judul: j,
+          isi: content,
+          tanggal: pickAnnCell(row, 'Tanggal') || new Date().toISOString().slice(0, 10),
+          waktu: pickAnnCell(row, 'Waktu') || '08.00 - 10.00 WIB',
+          lokasi: pickAnnCell(row, 'Lokasi') || 'Sekolah',
+          kategori: pickAnnCell(row, 'Kategori') || 'Agenda Perwalian',
+          author_name: currentUser.nama,
+          created_at: new Date().toISOString(),
+        });
+      });
+
+      if (imported.length === 0) {
+        throw new Error('Tidak ada baris valid dengan kolom Judul & Isi.');
+      }
+
+      await Promise.all(
+        imported.map((item) => setDoc(doc(db, COLLECTIONS.announcements, item.id), item))
+      );
+      setNotice(`Berhasil mengimpor ${imported.length} agenda/pengumuman.`);
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'Gagal mengimpor file pengumuman.');
+    }
+  };
+
+  const toAnnMatrix = (items: WcAnnouncement[]) =>
+    items.map((a) => [
+      a.tanggal,
+      a.waktu || '-',
+      a.kategori || 'Pengumuman',
+      a.judul,
+      a.lokasi || '-',
+      a.isi,
+      a.author_name || '-',
+    ]);
+
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-center justify-between gap-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4">
-        <div>
-          <h2 className="text-base font-bold text-slate-900 dark:text-white">
-            Agenda &amp; Papan Pengumuman Sekolah
-          </h2>
-          <p className="text-xs text-slate-500 dark:text-slate-400">
-            Informasi kegiatan perwalian, undangan orang tua, dan pengumuman akademik
-          </p>
+      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="text-base font-bold text-slate-900 dark:text-white">
+              Agenda &amp; Papan Pengumuman Sekolah
+            </h2>
+            <p className="text-xs text-slate-500 dark:text-slate-400">
+              Informasi kegiatan perwalian, undangan orang tua, dan pengumuman akademik
+            </p>
+          </div>
+
+          {canManage && (
+            <button
+              type="button"
+              onClick={openNew}
+              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold cursor-pointer whitespace-nowrap"
+            >
+              <Plus className="w-4 h-4" />
+              <span>Buat Agenda / Pengumuman</span>
+            </button>
+          )}
         </div>
 
-        {canManage && (
-          <button
-            type="button"
-            onClick={() => setModalOpen(true)}
-            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold cursor-pointer whitespace-nowrap"
-          >
-            <Plus className="w-4 h-4" />
-            <span>Buat Agenda / Pengumuman</span>
-          </button>
-        )}
+        <DataActionsBar
+          totalCount={announcements.length}
+          selectedCount={activeChecked.length}
+          allSelected={allSelected}
+          onToggleSelectAll={toggleSelectAll}
+          canManage={canManage}
+          onEditSelected={() => {
+            const target = announcements.find((a) => a.id === activeChecked[0]);
+            if (target) openEdit(target);
+          }}
+          onBulkDelete={handleBulkDelete}
+          bulkDeleteLabel="agenda/pengumuman"
+          onDownloadTemplateXls={handleDownloadTemplateXls}
+          onDownloadTemplateWord={handleDownloadTemplateWord}
+          onImportFile={handleImportFile}
+          onExportXls={() =>
+            exportRecordsToXls(
+              targetAnnouncements.map((a) => ({
+                Tanggal: a.tanggal,
+                Waktu: a.waktu || '-',
+                Kategori: a.kategori || 'Pengumuman',
+                Judul: a.judul,
+                Lokasi: a.lokasi || '-',
+                Isi: a.isi,
+                Pembuat: a.author_name || '-',
+              })),
+              'Agenda_Pengumuman',
+              'Agenda_Pengumuman_WaliConnect.xlsx'
+            )
+          }
+          onExportPdf={() =>
+            exportRecordsToPdf(
+              'AGENDA & PENGUMUMAN SEKOLAH',
+              `Jumlah Item: ${targetAnnouncements.length}`,
+              ANN_HEADERS,
+              toAnnMatrix(targetAnnouncements),
+              'Agenda_Pengumuman_WaliConnect.pdf',
+              true
+            )
+          }
+          onExportWord={() =>
+            exportRecordsToWord(
+              'AGENDA & PENGUMUMAN SEKOLAH',
+              `Jumlah Item: ${targetAnnouncements.length}`,
+              ANN_HEADERS,
+              toAnnMatrix(targetAnnouncements),
+              'Agenda_Pengumuman_WaliConnect.docx',
+              true
+            )
+          }
+          onPrint={() =>
+            triggerTablePrint({
+              title: 'AGENDA & PENGUMUMAN SEKOLAH',
+              subtitle: `Jumlah Item: ${targetAnnouncements.length}`,
+              headers: ANN_HEADERS,
+              rows: toAnnMatrix(targetAnnouncements),
+              landscape: true,
+            })
+          }
+          notice={notice}
+          error={actionError}
+        />
       </div>
 
       {announcements.length === 0 ? (
@@ -101,64 +361,96 @@ export const AnnouncementsView: React.FC<AnnouncementsViewProps> = ({
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-          {announcements.map((ann) => (
-            <div
-              key={ann.id}
-              className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl overflow-hidden flex flex-col"
-            >
-              {ann.foto_url && (
-                <div className="aspect-video w-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
-                  <img
-                    src={ann.foto_url}
-                    alt={ann.judul}
-                    referrerPolicy="no-referrer"
-                    className="w-full h-full object-cover"
-                  />
-                </div>
-              )}
+          {announcements.map((ann) => {
+            const isChecked = activeChecked.includes(ann.id);
+            return (
+              <div
+                key={ann.id}
+                className={`bg-white dark:bg-slate-900 border rounded-2xl overflow-hidden flex flex-col transition-colors ${
+                  isChecked
+                    ? 'border-blue-500 ring-1 ring-blue-500/30'
+                    : 'border-slate-200 dark:border-slate-800'
+                }`}
+              >
+                {ann.foto_url && (
+                  <div className="aspect-video w-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
+                    <img
+                      src={ann.foto_url}
+                      alt={ann.judul}
+                      referrerPolicy="no-referrer"
+                      className="w-full h-full object-cover"
+                    />
+                  </div>
+                )}
 
-              <div className="p-5 flex-1 flex flex-col justify-between space-y-3">
-                <div>
-                  <div className="flex items-center justify-between gap-2 mb-1.5">
-                    <span className="text-[11px] font-semibold text-blue-600 dark:text-blue-400">
-                      {ann.kategori || 'Pengumuman'}
+                <div className="p-5 flex-1 flex flex-col justify-between space-y-3">
+                  <div>
+                    <div className="flex items-center justify-between gap-2 mb-1.5">
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => toggleSelect(ann.id)}
+                          title="Pilih agenda/pengumuman"
+                          className="p-0.5 text-slate-500 hover:text-blue-600 cursor-pointer"
+                        >
+                          {isChecked ? (
+                            <CheckSquare className="w-4 h-4 text-blue-600" />
+                          ) : (
+                            <Square className="w-4 h-4" />
+                          )}
+                        </button>
+                        <span className="text-[11px] font-semibold text-blue-600 dark:text-blue-400">
+                          {ann.kategori || 'Pengumuman'}
+                        </span>
+                      </div>
+                      {canManage && (
+                        <div className="flex items-center gap-1">
+                          <button
+                            type="button"
+                            onClick={() => openEdit(ann)}
+                            className="p-1.5 rounded-lg text-slate-400 hover:text-blue-600 cursor-pointer"
+                            title="Edit"
+                          >
+                            <Edit3 className="w-4 h-4" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleDelete(ann.id)}
+                            className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 cursor-pointer"
+                            title="Hapus"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                    <h3 className="text-base font-bold text-slate-900 dark:text-white">
+                      {ann.judul}
+                    </h3>
+                    <p className="text-xs text-slate-600 dark:text-slate-300 mt-2 leading-relaxed whitespace-pre-line">
+                      {ann.isi}
+                    </p>
+                  </div>
+
+                  <div className="pt-3 border-t border-slate-100 dark:border-slate-800 flex flex-wrap gap-3 text-[11px] text-slate-500 dark:text-slate-400">
+                    <span className="inline-flex items-center gap-1 font-mono-tabular">
+                      <Calendar className="w-3.5 h-3.5" /> {ann.tanggal}
                     </span>
-                    {canManage && (
-                      <button
-                        type="button"
-                        onClick={() => handleDelete(ann.id)}
-                        className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 cursor-pointer"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
+                    {ann.waktu && (
+                      <span className="inline-flex items-center gap-1">
+                        <Clock className="w-3.5 h-3.5" /> {ann.waktu}
+                      </span>
+                    )}
+                    {ann.lokasi && (
+                      <span className="inline-flex items-center gap-1">
+                        <MapPin className="w-3.5 h-3.5" /> {ann.lokasi}
+                      </span>
                     )}
                   </div>
-                  <h3 className="text-base font-bold text-slate-900 dark:text-white">
-                    {ann.judul}
-                  </h3>
-                  <p className="text-xs text-slate-600 dark:text-slate-300 mt-2 leading-relaxed whitespace-pre-line">
-                    {ann.isi}
-                  </p>
-                </div>
-
-                <div className="pt-3 border-t border-slate-100 dark:border-slate-800 flex flex-wrap gap-3 text-[11px] text-slate-500 dark:text-slate-400">
-                  <span className="inline-flex items-center gap-1 font-mono-tabular">
-                    <Calendar className="w-3.5 h-3.5" /> {ann.tanggal}
-                  </span>
-                  {ann.waktu && (
-                    <span className="inline-flex items-center gap-1">
-                      <Clock className="w-3.5 h-3.5" /> {ann.waktu}
-                    </span>
-                  )}
-                  {ann.lokasi && (
-                    <span className="inline-flex items-center gap-1">
-                      <MapPin className="w-3.5 h-3.5" /> {ann.lokasi}
-                    </span>
-                  )}
                 </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
@@ -167,7 +459,7 @@ export const AnnouncementsView: React.FC<AnnouncementsViewProps> = ({
           <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl w-full max-w-xl shadow-xl">
             <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200 dark:border-slate-800">
               <h3 className="text-base font-bold text-slate-900 dark:text-white">
-                Terbitkan Agenda &amp; Pengumuman
+                {editingId ? 'Edit Agenda & Pengumuman' : 'Terbitkan Agenda & Pengumuman'}
               </h3>
               <button
                 type="button"
@@ -178,7 +470,7 @@ export const AnnouncementsView: React.FC<AnnouncementsViewProps> = ({
               </button>
             </div>
 
-            <form onSubmit={handleCreate} className="p-6 space-y-4">
+            <form onSubmit={handleSave} className="p-6 space-y-4">
               <div>
                 <label className="block text-xs font-semibold mb-1">Judul Agenda *</label>
                 <input
@@ -276,7 +568,7 @@ export const AnnouncementsView: React.FC<AnnouncementsViewProps> = ({
                   className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold cursor-pointer disabled:opacity-60"
                 >
                   {saving && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-                  <span>Terbitkan</span>
+                  <span>{editingId ? 'Simpan Perubahan' : 'Terbitkan'}</span>
                 </button>
               </div>
             </form>

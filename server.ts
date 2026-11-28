@@ -1,6 +1,8 @@
 import express from 'express';
 import dotenv from 'dotenv';
 import path from 'path';
+import dns from 'node:dns/promises';
+import net from 'node:net';
 import { fileURLToPath } from 'url';
 import { GoogleGenAI, Type } from '@google/genai';
 
@@ -13,6 +15,153 @@ const app = express();
 const PORT = 3000;
 
 app.use(express.json({ limit: '5mb' }));
+
+function isPrivateOrDisallowedIp(ip: string): boolean {
+  const normalized = ip.replace(/^::ffff:/i, '');
+  if (net.isIPv4(normalized)) {
+    const parts = normalized.split('.').map(Number);
+    if (parts.length !== 4 || parts.some((n) => Number.isNaN(n))) return true;
+    const [a, b] = parts;
+    if (a === 0 || a === 10 || a === 127) return true;
+    if (a === 169 && b === 254) return true;
+    if (a === 172 && b >= 16 && b <= 31) return true;
+    if (a === 192 && b === 168) return true;
+    if (a === 100 && b >= 64 && b <= 127) return true;
+    if (a >= 224) return true;
+    return false;
+  }
+  if (net.isIPv6(normalized)) {
+    const lower = normalized.toLowerCase();
+    if (lower === '::' || lower === '::1') return true;
+    if (lower.startsWith('fc') || lower.startsWith('fd')) return true;
+    if (lower.startsWith('fe80') || lower.startsWith('ff')) return true;
+    return false;
+  }
+  return true;
+}
+
+async function validateExternalImageUrl(rawUrl: string): Promise<URL> {
+  if (!rawUrl || rawUrl.length > 2048) {
+    throw new Error('URL gambar tidak valid atau terlalu panjang.');
+  }
+  const parsed = new URL(rawUrl);
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw new Error('Hanya skema http/https yang diizinkan.');
+  }
+  if (parsed.username || parsed.password) {
+    throw new Error('URL dengan kredensial tidak diizinkan.');
+  }
+  const host = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, '');
+  if (
+    !host ||
+    host === 'localhost' ||
+    host.endsWith('.localhost') ||
+    host.endsWith('.local') ||
+    host.endsWith('.internal')
+  ) {
+    throw new Error('Host internal tidak diizinkan.');
+  }
+  if (net.isIP(host)) {
+    if (isPrivateOrDisallowedIp(host)) {
+      throw new Error('Alamat IP privat tidak diizinkan.');
+    }
+    return parsed;
+  }
+  const records = await dns.lookup(host, { all: true });
+  if (!records || records.length === 0) {
+    throw new Error('Host tidak dapat diresolusi.');
+  }
+  for (const rec of records) {
+    if (isPrivateOrDisallowedIp(rec.address)) {
+      throw new Error('Alamat IP tujuan tidak diizinkan.');
+    }
+  }
+  return parsed;
+}
+
+function detectImageMimeFromBytes(buf: Buffer): string | null {
+  if (buf.length < 4) return null;
+  if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) return 'image/png';
+  if (buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return 'image/jpeg';
+  if (buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x38) return 'image/gif';
+  if (
+    buf.length >= 12 &&
+    buf.subarray(0, 4).toString('ascii') === 'RIFF' &&
+    buf.subarray(8, 12).toString('ascii') === 'WEBP'
+  ) {
+    return 'image/webp';
+  }
+  return null;
+}
+
+app.get('/api/image-proxy', async (req, res) => {
+  try {
+    const rawUrl = typeof req.query.url === 'string' ? req.query.url.trim() : '';
+    let currentUrl = await validateExternalImageUrl(rawUrl);
+
+    let finalResponse: Response | null = null;
+    for (let hop = 0; hop < 5; hop++) {
+      const resp = await fetch(currentUrl.toString(), {
+        method: 'GET',
+        redirect: 'manual',
+        signal: AbortSignal.timeout(8000),
+        headers: {
+          'User-Agent':
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+          Accept: 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8',
+        },
+      });
+
+      if (resp.status >= 300 && resp.status < 400) {
+        const loc = resp.headers.get('location');
+        if (!loc) {
+          return res.status(502).json({ error: 'Redirect gambar tidak memiliki tujuan.' });
+        }
+        const resolved = new URL(loc, currentUrl);
+        currentUrl = await validateExternalImageUrl(resolved.toString());
+        continue;
+      }
+
+      finalResponse = resp;
+      break;
+    }
+
+    if (!finalResponse || !finalResponse.ok) {
+      return res.status(finalResponse?.status || 502).json({ error: 'Gagal mengunduh gambar.' });
+    }
+
+    const contentLength = Number(finalResponse.headers.get('content-length') || 0);
+    const MAX_BYTES = 5 * 1024 * 1024;
+    if (contentLength > MAX_BYTES) {
+      return res.status(413).json({ error: 'Ukuran gambar melebihi batas 5MB.' });
+    }
+
+    const arrayBuf = await finalResponse.arrayBuffer();
+    if (arrayBuf.byteLength === 0 || arrayBuf.byteLength > MAX_BYTES) {
+      return res.status(413).json({ error: 'Ukuran gambar tidak valid.' });
+    }
+
+    const buffer = Buffer.from(arrayBuf);
+    const headerMime = (finalResponse.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
+    const sniffedMime = detectImageMimeFromBytes(buffer);
+    const mime =
+      headerMime.startsWith('image/') && !headerMime.includes('svg')
+        ? headerMime
+        : sniffedMime;
+
+    if (!mime) {
+      return res.status(415).json({ error: 'Konten URL bukan gambar raster yang didukung.' });
+    }
+
+    res.setHeader('Content-Type', mime);
+    res.setHeader('Cache-Control', 'public, max-age=3600');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    return res.send(buffer);
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : 'Gagal memuat proxy gambar.';
+    return res.status(400).json({ error: msg });
+  }
+});
 
 function getGeminiClient() {
   const apiKey = process.env.GEMINI_API_KEY;

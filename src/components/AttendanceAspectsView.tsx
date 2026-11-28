@@ -1,5 +1,13 @@
 import React, { useEffect, useState } from 'react';
-import { Sparkles, Save, Loader2, Check, CalendarRange } from 'lucide-react';
+import {
+  Sparkles,
+  Save,
+  Loader2,
+  Check,
+  CalendarRange,
+  CheckSquare,
+  Square,
+} from 'lucide-react';
 import { doc, updateDoc } from 'firebase/firestore';
 import { COLLECTIONS, db, handleFirestoreError, OperationType } from '../lib/firebase';
 import { calcAttendancePct } from '../lib/imageUtils';
@@ -11,7 +19,16 @@ import {
   hasSnapshotContent,
   normalizeEvaluasiPeriode,
 } from '../lib/aspectPeriods';
+import {
+  downloadRecordsXlsTemplate,
+  exportRecordsToPdf,
+  exportRecordsToWord,
+  exportRecordsToXls,
+  importRecordsFromFile,
+  triggerTablePrint,
+} from '../lib/docExportImport';
 import { StudentInfoModal } from './StudentInfoModal';
+import { DataActionsBar } from './DataActionsBar';
 import type {
   EvaluasiPeriode,
   PerkembanganSnapshot,
@@ -34,6 +51,46 @@ const ASPECT_FIELDS: { key: keyof Omit<PerkembanganSnapshot, 'updated_at'>; labe
   { key: 'kedisiplinan', label: '4. Aspek Kedisiplinan' },
   { key: 'potensi_minat', label: '5. Aspek Potensi & Minat' },
 ];
+
+const MATRIX_HEADERS = [
+  'NIS',
+  'Nama Murid',
+  'Kelas',
+  'P1',
+  'P2',
+  'P3',
+  'P4',
+  'P5',
+  'P6',
+  'P7',
+  'P8',
+  'P9',
+  '%',
+  'Periode',
+  'Akademik',
+  'Karakter',
+  'Sosial-Emosional',
+  'Kedisiplinan',
+  'Potensi & Minat',
+];
+
+function pickCell(row: Record<string, unknown>, ...keys: string[]): string {
+  const entries = Object.entries(row);
+  for (const key of keys) {
+    const found = entries.find(
+      ([k]) => k.trim().toLowerCase() === key.trim().toLowerCase()
+    );
+    if (found !== undefined && String(found[1] ?? '').trim()) {
+      return String(found[1]).trim();
+    }
+  }
+  return '';
+}
+
+function parseAttMark(val: string): boolean {
+  const v = val.trim().toLowerCase();
+  return ['v', '✓', '1', 'true', 'ya', 'hadir', 'y', 'x'].includes(v);
+}
 
 export const AttendanceAspectsView: React.FC<AttendanceAspectsViewProps> = ({
   students,
@@ -59,6 +116,32 @@ export const AttendanceAspectsView: React.FC<AttendanceAspectsViewProps> = ({
   const [aiBusy, setAiBusy] = useState(false);
   const [statusMsg, setStatusMsg] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
+
+  const [checkedIds, setCheckedIds] = useState<string[]>([]);
+  const [matrixNotice, setMatrixNotice] = useState('');
+  const [matrixError, setMatrixError] = useState('');
+
+  const visibleIds = visibleStudents.map((s) => s.id);
+  const activeChecked = checkedIds.filter((id) => visibleIds.includes(id));
+  const allSelected = visibleIds.length > 0 && activeChecked.length === visibleIds.length;
+  const targetStudents =
+    activeChecked.length > 0
+      ? visibleStudents.filter((s) => activeChecked.includes(s.id))
+      : visibleStudents;
+
+  const toggleSelect = (id: string) => {
+    setCheckedIds((prev) =>
+      prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
+    );
+  };
+
+  const toggleSelectAll = () => {
+    if (allSelected) {
+      setCheckedIds((prev) => prev.filter((id) => !visibleIds.includes(id)));
+    } else {
+      setCheckedIds((prev) => Array.from(new Set([...prev, ...visibleIds])));
+    }
+  };
 
   useEffect(() => {
     if (selectedStudent) {
@@ -111,6 +194,174 @@ export const AttendanceAspectsView: React.FC<AttendanceAspectsViewProps> = ({
       handleFirestoreError(err, OperationType.UPDATE, `${COLLECTIONS.students}/${student.id}`);
     }
   };
+
+  const handleBulkResetAttendance = async () => {
+    setMatrixError('');
+    setMatrixNotice('');
+    try {
+      await Promise.all(
+        activeChecked.map((id) =>
+          updateDoc(doc(db, COLLECTIONS.students, id), {
+            kehadiran: Array(9).fill(false),
+            updated_at: new Date().toISOString(),
+          })
+        )
+      );
+      setMatrixNotice(`Presensi P1–P9 untuk ${activeChecked.length} murid berhasil direset.`);
+      setCheckedIds((prev) => prev.filter((id) => !activeChecked.includes(id)));
+    } catch (err) {
+      setMatrixError(err instanceof Error ? err.message : 'Gagal mereset presensi murid.');
+    }
+  };
+
+  const handleDownloadTemplateXls = () => {
+    const sample = visibleStudents[0];
+    downloadRecordsXlsTemplate(
+      [
+        {
+          NIS: sample?.nis || '2025001',
+          'Nama Murid': sample?.nama_lengkap || 'Ahmad Rizky Pratama',
+          Kelas: sample?.kelas || 'XI IPA 1',
+          P1: 'v',
+          P2: 'v',
+          P3: 'v',
+          P4: '-',
+          P5: '-',
+          P6: '-',
+          P7: '-',
+          P8: '-',
+          P9: '-',
+          Periode: activePeriode,
+          Akademik: 'Menunjukkan peningkatan konsisten pada mata pelajaran inti.',
+          Karakter: 'Sopan, disiplin, dan aktif membantu teman.',
+          'Sosial-Emosional': 'Mampu beradaptasi dan mengelola emosi dengan baik.',
+          Kedisiplinan: 'Tertib mengikuti seluruh sesi perwalian.',
+          'Potensi & Minat': 'Antusias pada bidang riset dan teknologi.',
+        },
+      ],
+      [
+        'Petunjuk Import Presensi & 5 Aspek Perkembangan WaliConnect Pro',
+        '1. Cocokkan baris murid berdasarkan kolom NIS atau Nama Murid yang sudah terdaftar.',
+        '2. Kolom P1–P9 diisi v / Hadir / 1 jika hadir, atau - jika tidak hadir.',
+        '3. Periode diisi: 3 Bulan, 6 Bulan, 9 Bulan, atau 1 Tahun.',
+      ],
+      'Presensi_5Aspek',
+      'Template_Presensi_5Aspek.xlsx'
+    );
+  };
+
+  const handleDownloadTemplateWord = async () => {
+    const sample = visibleStudents[0];
+    await exportRecordsToWord(
+      'TEMPLATE IMPORT PRESENSI P1–P9 & 5 ASPEK',
+      'Sesuaikan NIS / Nama Murid dengan data murid terdaftar, isi kolom P1–P9 dan 5 aspek, lalu simpan .docx.',
+      MATRIX_HEADERS.filter((h) => h !== '%'),
+      [
+        [
+          sample?.nis || '2025001',
+          sample?.nama_lengkap || 'Ahmad Rizky Pratama',
+          sample?.kelas || 'XI IPA 1',
+          'v',
+          'v',
+          'v',
+          '-',
+          '-',
+          '-',
+          '-',
+          '-',
+          '-',
+          activePeriode,
+          'Peningkatan konsisten.',
+          'Disiplin & bertanggung jawab.',
+          'Adaptif.',
+          'Tertib.',
+          'Minat riset.',
+        ],
+      ],
+      'Template_Presensi_5Aspek.docx',
+      true
+    );
+  };
+
+  const handleImportFile = async (file: File) => {
+    setMatrixError('');
+    setMatrixNotice('');
+    try {
+      const rows = await importRecordsFromFile(file);
+      let updatedCount = 0;
+
+      for (const row of rows) {
+        const nis = pickCell(row, 'NIS');
+        const nama = pickCell(row, 'Nama Murid', 'Nama');
+        const matched = visibleStudents.find(
+          (s) =>
+            (nis && s.nis.trim().toLowerCase() === nis.toLowerCase()) ||
+            (nama && s.nama_lengkap.trim().toLowerCase() === nama.toLowerCase())
+        );
+        if (!matched) continue;
+
+        const nextKehadiran = Array.from({ length: 9 }, (_, i) => {
+          const raw = pickCell(row, `P${i + 1}`);
+          return raw ? parseAttMark(raw) : Boolean(matched.kehadiran?.[i]);
+        });
+
+        const periode = normalizeEvaluasiPeriode(pickCell(row, 'Periode') || activePeriode);
+        const existingSnap = getSnapshotForPeriode(matched.perkembangan, periode);
+        const akademik = pickCell(row, 'Akademik') || existingSnap.akademik;
+        const karakter = pickCell(row, 'Karakter') || existingSnap.karakter;
+        const sosial =
+          pickCell(row, 'Sosial-Emosional', 'Sosial Emosional') ||
+          existingSnap.sosial_emosional;
+        const disiplin = pickCell(row, 'Kedisiplinan') || existingSnap.kedisiplinan;
+        const potensi =
+          pickCell(row, 'Potensi & Minat', 'Potensi') || existingSnap.potensi_minat;
+
+        const nextPerkembangan = buildUpdatedPerkembangan(matched.perkembangan, periode, {
+          akademik,
+          karakter,
+          sosial_emosional: sosial,
+          kedisiplinan: disiplin,
+          potensi_minat: potensi,
+        });
+
+        await updateDoc(doc(db, COLLECTIONS.students, matched.id), {
+          kehadiran: nextKehadiran,
+          perkembangan: nextPerkembangan,
+          updated_at: new Date().toISOString(),
+        });
+        updatedCount += 1;
+      }
+
+      if (updatedCount === 0) {
+        throw new Error(
+          'Tidak ada murid yang cocok berdasarkan NIS atau Nama Murid pada file yang diunggah.'
+        );
+      }
+      setMatrixNotice(
+        `Berhasil memperbarui presensi & evaluasi 5 aspek untuk ${updatedCount} murid.`
+      );
+    } catch (err) {
+      setMatrixError(err instanceof Error ? err.message : 'Gagal mengimpor file presensi.');
+    }
+  };
+
+  const toMatrixRows = (items: WcStudent[]) =>
+    items.map((st) => {
+      const snap = getSnapshotForPeriode(st.perkembangan, activePeriode);
+      return [
+        st.nis,
+        st.nama_lengkap,
+        st.kelas,
+        ...Array.from({ length: 9 }, (_, i) => (st.kehadiran?.[i] ? 'v' : '-')),
+        `${calcAttendancePct(st.kehadiran)}%`,
+        activePeriode,
+        snap.akademik || '-',
+        snap.karakter || '-',
+        snap.sosial_emosional || '-',
+        snap.kedisiplinan || '-',
+        snap.potensi_minat || '-',
+      ];
+    });
 
   const handleAiFillAspects = async () => {
     if (!selectedStudent) return;
@@ -196,10 +447,10 @@ export const AttendanceAspectsView: React.FC<AttendanceAspectsViewProps> = ({
   return (
     <div className="space-y-6">
       {/* Lampiran D: Presensi Pertemuan 1-9 Matrix */}
-      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6">
-        <div className="mb-4">
+      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 space-y-4">
+        <div>
           <h2 className="text-base font-bold text-slate-900 dark:text-white">
-            Matriks Presensi Pertemuan 1–9 (Lampiran D)
+            Matriks Presensi Pertemuan 1–9 (Lampiran D) &amp; Rekap 5 Aspek
           </h2>
           <p className="text-xs text-slate-500 dark:text-slate-400">
             {canEdit
@@ -208,10 +459,104 @@ export const AttendanceAspectsView: React.FC<AttendanceAspectsViewProps> = ({
           </p>
         </div>
 
+        <DataActionsBar
+          totalCount={visibleStudents.length}
+          selectedCount={activeChecked.length}
+          allSelected={allSelected}
+          onToggleSelectAll={toggleSelectAll}
+          canManage={canEdit}
+          onEditSelected={() => {
+            if (activeChecked[0]) {
+              setSelectedId(activeChecked[0]);
+              setMatrixNotice('Murid dimuat ke form Evaluasi 5 Aspek Perkembangan di bawah.');
+            }
+          }}
+          onBulkDelete={handleBulkResetAttendance}
+          bulkDeleteLabel="reset presensi P1–P9"
+          onDownloadTemplateXls={handleDownloadTemplateXls}
+          onDownloadTemplateWord={handleDownloadTemplateWord}
+          onImportFile={handleImportFile}
+          onExportXls={() =>
+            exportRecordsToXls(
+              targetStudents.map((st) => {
+                const snap = getSnapshotForPeriode(st.perkembangan, activePeriode);
+                return {
+                  NIS: st.nis,
+                  'Nama Murid': st.nama_lengkap,
+                  Kelas: st.kelas,
+                  P1: st.kehadiran?.[0] ? 'v' : '-',
+                  P2: st.kehadiran?.[1] ? 'v' : '-',
+                  P3: st.kehadiran?.[2] ? 'v' : '-',
+                  P4: st.kehadiran?.[3] ? 'v' : '-',
+                  P5: st.kehadiran?.[4] ? 'v' : '-',
+                  P6: st.kehadiran?.[5] ? 'v' : '-',
+                  P7: st.kehadiran?.[6] ? 'v' : '-',
+                  P8: st.kehadiran?.[7] ? 'v' : '-',
+                  P9: st.kehadiran?.[8] ? 'v' : '-',
+                  Kehadiran: `${calcAttendancePct(st.kehadiran)}%`,
+                  Periode: activePeriode,
+                  Akademik: snap.akademik || '-',
+                  Karakter: snap.karakter || '-',
+                  'Sosial-Emosional': snap.sosial_emosional || '-',
+                  Kedisiplinan: snap.kedisiplinan || '-',
+                  'Potensi & Minat': snap.potensi_minat || '-',
+                };
+              }),
+              'Presensi_5Aspek',
+              'Presensi_5Aspek_WaliConnect.xlsx'
+            )
+          }
+          onExportPdf={() =>
+            exportRecordsToPdf(
+              `MATRIKS PRESENSI P1–P9 & EVALUASI 5 ASPEK (${activePeriode})`,
+              `Jumlah Murid: ${targetStudents.length}`,
+              MATRIX_HEADERS,
+              toMatrixRows(targetStudents),
+              'Presensi_5Aspek_WaliConnect.pdf',
+              true
+            )
+          }
+          onExportWord={() =>
+            exportRecordsToWord(
+              `MATRIKS PRESENSI P1–P9 & EVALUASI 5 ASPEK (${activePeriode})`,
+              `Jumlah Murid: ${targetStudents.length}`,
+              MATRIX_HEADERS,
+              toMatrixRows(targetStudents),
+              'Presensi_5Aspek_WaliConnect.docx',
+              true
+            )
+          }
+          onPrint={() =>
+            triggerTablePrint({
+              title: `MATRIKS PRESENSI P1–P9 & EVALUASI 5 ASPEK (${activePeriode})`,
+              subtitle: `Jumlah Murid: ${targetStudents.length}`,
+              headers: MATRIX_HEADERS,
+              rows: toMatrixRows(targetStudents),
+              landscape: true,
+            })
+          }
+          notice={matrixNotice}
+          error={matrixError}
+        />
+
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs">
             <thead className="bg-slate-50 dark:bg-slate-800/70 border-b border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-300">
               <tr>
+                <th className="py-3 px-3 w-10">
+                  <button
+                    type="button"
+                    onClick={toggleSelectAll}
+                    title="Pilih Semua"
+                    className="p-0.5 text-slate-500 hover:text-blue-600 cursor-pointer"
+                  >
+                    {allSelected ? (
+                      <CheckSquare className="w-4 h-4 text-blue-600" />
+                    ) : (
+                      <Square className="w-4 h-4" />
+                    )}
+                  </button>
+                </th>
                 <th className="py-3 px-4 font-bold">Nama Murid</th>
                 <th className="py-3 px-3 font-bold">Kelas</th>
                 {Array.from({ length: 9 }, (_, i) => (
@@ -225,13 +570,31 @@ export const AttendanceAspectsView: React.FC<AttendanceAspectsViewProps> = ({
             <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
               {visibleStudents.map((st) => {
                 const pct = calcAttendancePct(st.kehadiran);
+                const isChecked = activeChecked.includes(st.id);
                 return (
                   <tr
                     key={st.id}
                     className={`hover:bg-slate-50 dark:hover:bg-slate-800/40 ${
-                      selectedStudent?.id === st.id ? 'bg-blue-50/50 dark:bg-blue-950/20' : ''
+                      isChecked
+                        ? 'bg-blue-50/70 dark:bg-blue-950/30'
+                        : selectedStudent?.id === st.id
+                          ? 'bg-blue-50/40 dark:bg-blue-950/20'
+                          : ''
                     }`}
                   >
+                    <td className="py-3 px-3">
+                      <button
+                        type="button"
+                        onClick={() => toggleSelect(st.id)}
+                        className="p-0.5 text-slate-500 hover:text-blue-600 cursor-pointer"
+                      >
+                        {isChecked ? (
+                          <CheckSquare className="w-4 h-4 text-blue-600" />
+                        ) : (
+                          <Square className="w-4 h-4" />
+                        )}
+                      </button>
+                    </td>
                     <td className="py-3 px-4 font-semibold text-slate-900 dark:text-white">
                       <button
                         type="button"
@@ -274,7 +637,7 @@ export const AttendanceAspectsView: React.FC<AttendanceAspectsViewProps> = ({
               })}
               {visibleStudents.length === 0 && (
                 <tr>
-                  <td colSpan={12} className="py-8 text-center text-slate-500">
+                  <td colSpan={13} className="py-8 text-center text-slate-500">
                     Belum ada data murid.
                   </td>
                 </tr>
